@@ -14,6 +14,10 @@ PLEASE REMEMBER TO CHANGE THE '..main' WITH AN ACTUAL TAG in GITHUB LINK.
   * Support for NumPy 1.17 has been dropped, per the
     [deprecation policy](https://jax.readthedocs.io/en/latest/deprecation.html).
     Please upgrade to a supported NumPy version.
+  * `pxla.ShardedDeviceArray` constructor has been replaced with
+    `pxla.make_sharded_device_array`. The change is effective with jaxlib
+    0.1.70 or newer.
+    These objects are expected to be internal to JAX, prefer not using them.
 * New features:
   * Improved the support for shape polymorphism in jax2tf for operations that
     need to use a dimension size in array computation, e.g., `jnp.mean`.
