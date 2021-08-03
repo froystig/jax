@@ -19,7 +19,9 @@ limitations under the License.
 #include <cstddef>
 #include <string>
 
+#include "absl/status/status.h"
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 
@@ -27,8 +29,10 @@ std::string BuildCudaLuPivotsToPermutationDescriptor(
     std::int64_t batch_size, std::int32_t pivot_size,
     std::int32_t permutation_size);
 
-void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
-                               const char* opaque, std::size_t opaque_len);
+absl::Status CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
+                                       const char* opaque,
+                                       std::size_t opaque_len,
+                                       XlaCustomCallStatus*);
 
 }  // namespace jax
 

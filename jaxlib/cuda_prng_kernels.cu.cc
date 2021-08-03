@@ -13,12 +13,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/cuda_prng_kernels.h"
+
 #include <array>
 #include <cstddef>
 
-#include "jaxlib/cuda_prng_kernels.h"
 #include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
+#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 namespace {
@@ -106,8 +108,9 @@ std::string BuildCudaThreeFry2x32Descriptor(std::int64_t n) {
   return PackDescriptorAsString(ThreeFry2x32Descriptor{n});
 }
 
-void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
-                      std::size_t opaque_len) {
+absl::Status CudaThreeFry2x32(cudaStream_t stream, void** buffers,
+                              const char* opaque, std::size_t opaque_len,
+                              XlaCustomCallStatus*) {
   std::array<const std::uint32_t*, 2> keys;
   keys[0] = reinterpret_cast<const std::uint32_t*>(buffers[0]);
   keys[1] = reinterpret_cast<const std::uint32_t*>(buffers[1]);
@@ -125,7 +128,8 @@ void CudaThreeFry2x32(cudaStream_t stream, void** buffers, const char* opaque,
   ThreeFry2x32Kernel<<<grid_dim, block_dim, /*dynamic_shared_mem_bytes=*/0,
                        stream>>>(keys[0], keys[1], data[0], data[1], out[0],
                                  out[1], descriptor.n);
-  JAX_THROW_IF_ERROR(cudaGetLastError());
+  JAX_RETURN_IF_ERROR(cudaGetLastError());
+  return absl::OkStatus();
 }
 
 }  // namespace jax

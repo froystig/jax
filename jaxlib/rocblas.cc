@@ -30,6 +30,7 @@ limitations under the License.
 #include "jaxlib/handle_pool.h"
 #include "jaxlib/kernel_pybind11_helpers.h"
 #include "jaxlib/rocm_gpu_kernel_helpers.h"
+#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
 #include "rocm/include/hip/hip_runtime.h"
 #include "rocm/include/hip/hip_runtime_api.h"
 #include "rocm/include/rocblas.h"
@@ -149,7 +150,7 @@ std::pair<size_t, py::bytes> BuildTrsmDescriptor(const py::dtype& dtype,
 }
 
 void Trsm(hipStream_t stream, void** buffers, const char* opaque,
-          size_t opaque_len) {
+          size_t opaque_len, XlaCustomCallStatus*) {
   const TrsmDescriptor& d =
       *UnpackDescriptor<TrsmDescriptor>(opaque, opaque_len);
   auto handle = rocBlasHandlePool::Borrow(stream);
@@ -291,7 +292,7 @@ std::pair<int, py::bytes> BuildPotrfDescriptor(const py::dtype& dtype,
 }
 
 void Potrf(hipStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+           size_t opaque_len, XlaCustomCallStatus*) {
   const PotrfDescriptor& d =
       *UnpackDescriptor<PotrfDescriptor>(opaque, opaque_len);
   auto handle = rocBlasHandlePool::Borrow(stream);
@@ -390,7 +391,7 @@ std::pair<int, py::bytes> BuildGetrfDescriptor(const py::dtype& dtype, int b,
 }
 
 void Getrf(hipStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+           size_t opaque_len, XlaCustomCallStatus*) {
   const GetrfDescriptor& d =
       *UnpackDescriptor<GetrfDescriptor>(opaque, opaque_len);
   auto handle = rocBlasHandlePool::Borrow(stream);
@@ -495,7 +496,7 @@ std::pair<int, py::bytes> BuildGeqrfDescriptor(const py::dtype& dtype, int b,
 }
 
 void Geqrf(hipStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+           size_t opaque_len, XlaCustomCallStatus*) {
   const GeqrfDescriptor& d =
       *UnpackDescriptor<GeqrfDescriptor>(opaque, opaque_len);
   auto handle = rocBlasHandlePool::Borrow(stream);
@@ -609,7 +610,7 @@ std::pair<int, py::bytes> BuildOrgqrDescriptor(const py::dtype& dtype, int b,
 }
 
 void Orgqr(hipStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+           size_t opaque_len, XlaCustomCallStatus*) {
   const OrgqrDescriptor& d =
       *UnpackDescriptor<OrgqrDescriptor>(opaque, opaque_len);
   auto handle = rocBlasHandlePool::Borrow(stream);
@@ -716,7 +717,7 @@ std::pair<int, py::bytes> BuildGesvdDescriptor(const py::dtype& dtype, int b,
 }
 
 void Gesvd(hipStream_t stream, void** buffers, const char* opaque,
-           size_t opaque_len) {
+           size_t opaque_len, XlaCustomCallStatus*) {
   const GesvdDescriptor& d =
       *UnpackDescriptor<GesvdDescriptor>(opaque, opaque_len);
   auto handle = rocBlasHandlePool::Borrow(stream);

@@ -20,6 +20,7 @@ limitations under the License.
 
 #include "jaxlib/cuda_gpu_kernel_helpers.h"
 #include "jaxlib/kernel_helpers.h"
+#include "third_party/tensorflow/compiler/xla/service/custom_call_status.h"
 
 namespace jax {
 namespace {
@@ -73,8 +74,10 @@ std::string BuildCudaLuPivotsToPermutationDescriptor(
       batch_size, pivot_size, permutation_size});
 }
 
-void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
-                               const char* opaque, std::size_t opaque_len) {
+absl::Status CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
+                                       const char* opaque,
+                                       std::size_t opaque_len,
+                                       XlaCustomCallStatus*) {
   const std::int32_t* pivots =
       reinterpret_cast<const std::int32_t*>(buffers[0]);
   std::int32_t* permutation_out = reinterpret_cast<std::int32_t*>(buffers[1]);
@@ -89,7 +92,8 @@ void CudaLuPivotsToPermutation(cudaStream_t stream, void** buffers,
                                 /*dynamic_shared_mem_bytes=*/0, stream>>>(
       pivots, permutation_out, descriptor.batch_size, descriptor.pivot_size,
       descriptor.permutation_size);
-  JAX_THROW_IF_ERROR(cudaGetLastError());
+  JAX_RETURN_IF_ERROR(cudaGetLastError());
+  return absl::OkStatus();
 }
 
 }  // namespace jax
