@@ -26,7 +26,7 @@ print(jaxpr)
 
 # ## Jaxpr interpreters
 
-# ### `eval_jaxpr` (incomplete)
+# ### `eval_jaxpr`
 
 def eval_jaxpr(jaxpr: jex.jaxpr.Jaxpr, *args: Any):
 
@@ -46,6 +46,8 @@ def eval_jaxpr(jaxpr: jex.jaxpr.Jaxpr, *args: Any):
 
   for eqn in jaxpr.equations():
     invals = map(read, eqn.inputs)
+    # TODO(sharadmv,frostig): handle source info provenance
+    # Idea: use `eqn.bind/evaluate` to keep track of source info
     ans = eqn.primitive.bind(*invals, **eqn.params)
     map(write, eqn.outputs, ans)
 
