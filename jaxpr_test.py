@@ -1,4 +1,5 @@
 # # Jaxpr API
+import functools
 
 from typing import Any, Dict, Sequence
 
@@ -61,6 +62,14 @@ def _exp_inverse(x):
 exp_p, = jex.primitives.primitives_by_name('exp')
 inverse_rules[exp_p] = _exp_inverse
 
+def _xla_call_inverse(*args, call_jaxpr, **params):
+  inverted_jaxpr = jex.jaxpr.make_jaxpr(
+      functools.partial(inverse_jaxpr, call_jaxpr))(*args)
+  return xla_call_p.bind(*args, call_jaxpr=inverted_jaxpr, **params)
+xla_call_p, = jex.primitives.primitives_by_name('xla_call')
+inverse_rules[xla_call_p] = _xla_call_inverse
+
+
 def inverse_jaxpr(jaxpr: jex.jaxpr.Jaxpr, *args: Any):
 
   env: Dict[jex.jaxpr.Var, Any] = {}
@@ -89,3 +98,12 @@ def inverse_jaxpr(jaxpr: jex.jaxpr.Jaxpr, *args: Any):
 
 print(eval_jaxpr(jaxpr, 1.))
 print(inverse_jaxpr(jaxpr, 1.))
+
+def f(x):
+  y = jax.jit(jnp.exp)(x)
+  y = jnp.exp(y)
+  return y
+
+jaxpr = jex.jaxpr.make_jaxpr(f)(1.)
+print(eval_jaxpr(jaxpr, 1.))
+print(inverse_jaxpr(jaxpr, 15.15))

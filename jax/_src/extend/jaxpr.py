@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import jax
 import jax.numpy as jnp
 from jax import core
+from jax import tree_util
 
 from jax._src import source_info_util
 from jax._src import util
@@ -81,11 +82,47 @@ class Equation:
                       source_info_util.new_source_info()),
         core.JaxprPpContext(), core.JaxprPpSettings())).rstrip()
 
+  def _to_core(self) -> core.JaxprEqn:
+    return core.JaxprEqn(
+        invars=[v._to_core() for v in self.inputs],
+        outvars=[v._to_core() for v in self.outputs],
+        primitive=self.primitive._prim,
+        params=convert_params_to_core(
+          self.params, self.primitive._prim.is_call_primitive),
+        effects=core.no_effects,
+        source_info=source_info_util.new_source_info())
+
+def convert_params_to_core(params: Dict[str, Any], is_call_primitive: bool):
+  updated_params = {}
+  def _update_jaxpr(value):
+    if isinstance(value, Jaxpr):
+      if is_call_primitive:
+        return value._closed_jaxpr.jaxpr
+      return value._closed_jaxpr
+    return value
+  for k, v in params.items():
+    updated_params[k] = tree_util.tree_map(_update_jaxpr, v)
+  return updated_params
+
+def convert_params_from_core(params: Dict[str, Any]):
+  updated_params = {}
+  def _update_jaxpr(v):
+    if isinstance(v, core.ClosedJaxpr):
+      return Jaxpr(v)
+    elif isinstance(v, core.Jaxpr):
+      assert len(v.constvars) == 0
+      return Jaxpr(core.ClosedJaxpr(v, ()))
+    else:
+      return v
+  for k, v in params.items():
+    updated_params[k] = tree_util.tree_map(_update_jaxpr, v)
+  return updated_params
 
 def from_core_eqn(eqn: core.JaxprEqn) -> Equation:
   invars = map(from_core_atom, eqn.invars)
   outvars  = map(from_core_atom, eqn.outvars)
-  return Equation(primitives.Primitive(eqn.primitive), dict(eqn.params), invars,
+  params = convert_params_from_core(eqn.params)
+  return Equation(primitives.Primitive(eqn.primitive), params, invars,
                   outvars)
 
 
@@ -114,6 +151,9 @@ class Jaxpr:
 
   def __repr__(self):
     return repr(self._closed_jaxpr)
+
+  def _to_core(self):
+    return self._closed_jaxpr
 
 
 def make_jaxpr(f, **kwargs):

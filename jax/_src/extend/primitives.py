@@ -14,7 +14,10 @@ class Primitive:
   _prim: core.Primitive
 
   def bind(self, *args, **params) -> List[Any]:
-    ans = self._prim.bind(*args, **params)
+    from jax._src.extend import jaxpr
+    params = jaxpr.convert_params_to_core(params, self._prim.call_primitive)
+    subfuns, params = self._prim.get_bind_params(params)
+    ans = self._prim.bind(*subfuns, *args, **params)
     if not self._prim.multiple_results:
       ans = [ans]
     return ans
