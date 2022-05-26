@@ -2,7 +2,7 @@ from __future__ import annotations
 import collections
 from dataclasses import dataclass
 
-from typing import Any, List, Set
+from typing import Any, Dict, List, Set
 
 from jax import core
 from jax.interpreters import batching
@@ -36,5 +36,5 @@ def primitives_by_name(name: str) -> List[Primitive]:
 def register_core_primitive(prim: core.Primitive):
   register_primitive(prim.name, Primitive(prim))
 
-for key in batching.primitive_batchers:
-  register_core_primitive(key)
+for prim in core.all_primitives:
+  register_core_primitive(prim)

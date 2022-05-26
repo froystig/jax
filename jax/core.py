@@ -302,6 +302,11 @@ literalable_types: Set[type] = set()
 
 Atom = Union[Var, Literal]
 
+all_primitives: Set[Primitive] = set()
+
+# TODO(sharadmv,frostig): Use something other than the `Primitive` constructor
+# to register the primitives in `all_primitives`.
+
 class Primitive:
   name: str
   # set for multi-output primitives.
@@ -313,6 +318,8 @@ class Primitive:
 
   def __init__(self, name: str):
     self.name = name
+    assert self not in all_primitives
+    all_primitives.add(self)
 
   def __repr__(self):
     return '{}'.format(self.name)
