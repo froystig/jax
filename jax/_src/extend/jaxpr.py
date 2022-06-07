@@ -38,10 +38,12 @@ class Type:
   named_shape: Dict[str, int]
   dtype: jnp.dtype
 
-
 def type_from_aval(aval: core.AbstractValue):
   assert isinstance(aval, core.ShapedArray), aval
   return Type(aval.shape, aval.named_shape, aval.dtype)
+
+def get_type(value: Any) -> Type:
+  return type_from_aval(core.get_aval(value))
 
 def from_core_atom(atom: core.Atom) -> Atom:
   if isinstance(atom, core.Literal):
@@ -58,22 +60,30 @@ class Var:
   def _to_core(self) -> core.Var:
     return self._var
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, unsafe_hash=False)
 class Literal:
   type: Type
   value: Any
+
+  def __hash__(self):
+    return id(self)
 
   def _to_core(self) -> core.Literal:
     return core.Literal(self.value, self.type)
 
 Atom = Union[Var, Literal]
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, unsafe_hash=False)
 class Equation:
   primitive: primitives.Primitive
   params: Dict[str, Any]
   inputs: List[Atom]
   outputs: List[Var]
+
+  def __hash__(self):
+    keys = tuple(sorted(self.params))
+    values = tuple(self.params[k] for k in keys)
+    return hash((tuple(self.inputs), tuple(self.outputs), self.primitive, keys, values))
 
   def pretty_print(self):
     return str(core.pp_eqn(
@@ -157,9 +167,12 @@ class Jaxpr:
     return self._closed_jaxpr
 
 
-def make_jaxpr(f, **kwargs):
-  core_jaxpr_maker = jax.make_jaxpr(f, **kwargs)
+def make_jaxpr(f, return_shape=False, **kwargs):
+  core_jaxpr_maker = jax.make_jaxpr(f, return_shape=return_shape, **kwargs)
   @functools.wraps(f)
   def jaxpr_maker(*args, **kwargs):
+    if return_shape:
+      jaxpr, out_shape = core_jaxpr_maker(*args, **kwargs)
+      return Jaxpr(jaxpr), out_shape
     return Jaxpr(core_jaxpr_maker(*args, **kwargs))
   return jaxpr_maker
