@@ -14,12 +14,13 @@
 
 from jax._src.extend.jaxpr import (
     Atom as Atom,
-    Jaxpr as Jaxpr,
     Equation as Equation,
+    Jaxpr as Jaxpr,
     Literal as Literal,
-    make_jaxpr as make_jaxpr,
     Type as Type,
     Var as Var,
+    get_type as get_type ,
+    make_jaxpr as make_jaxpr,
 )
 
 from jax._src.extend.primitives import (
