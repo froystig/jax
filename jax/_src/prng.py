@@ -1049,10 +1049,49 @@ def _threefry_fold_in(key, data):
 
 def threefry_random_bits(key: jnp.ndarray, bit_width, shape):
   """Sample uniform random bits of given width and shape using PRNG key."""
-  return _threefry_random_bits(key, bit_width, shape)
+  if config.jax_threefry_partitionable:
+    return _threefry_random_bits_partitionable(key, bit_width, shape)
+  else:
+    return _threefry_random_bits_original(key, bit_width, shape)
+
+def _threefry_random_bits_partitionable(key: jnp.ndarray, bit_width, shape):
+  if not _is_threefry_prng_key(key):
+    raise TypeError("threefry_random_bits got invalid prng key.")
+  if bit_width not in (8, 16, 32, 64):
+    raise TypeError("requires 8-, 16-, 32- or 64-bit field width.")
+
+  if all(core.is_constant_dim(d) for d in shape) and prod(shape) > 2 ** 64:
+    raise NotImplementedError('random bits array of size exceeding 2 ** 64')
+
+  size = prod(shape)
+  n, r = divmod(bit_width * size, 32)
+  if r > 0:
+    n += 1
+  even_size = n + (n % 2)
+
+  counts = jnp.arange(n, dtype=jnp.uint32)
+  circ = counts % (even_size // 2)
+  k1, k2 = key
+  bits_xx, bits_yy = threefry_2x32(k1, k2, circ, circ + even_size // 2)
+
+  dtype = UINT_DTYPES[bit_width]
+  if bit_width == 64:
+    # in this case, size == even_size
+    bits_x, bits_y = bits_xx[:size // 2], bits_yy[:size // 2]
+    bits_x = lax.convert_element_type(bits_x, dtype)
+    bits_y = lax.convert_element_type(bits_y, dtype)
+    bits = lax.shift_left(bits_x, dtype(32)) | bits_y
+  else:
+    bits = jnp.where(counts < even_size // 2, bits_xx, bits_yy)
+    if bit_width != 32:
+      bits = bits.view(dtype)
+
+  return lax.reshape(bits, shape)
+  dtype = UINT_DTYPES[bit_width]
+  return bits.view(dtype)[..., 0]
 
 @partial(jit, static_argnums=(1, 2), inline=True)
-def _threefry_random_bits(key: jnp.ndarray, bit_width, shape):
+def _threefry_random_bits_original(key: jnp.ndarray, bit_width, shape):
   if not _is_threefry_prng_key(key):
     raise TypeError("threefry_random_bits got invalid prng key.")
   if bit_width not in (8, 16, 32, 64):

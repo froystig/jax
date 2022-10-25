@@ -734,6 +734,13 @@ default_prng_impl = config.define_enum_state(
     help=('Select the default PRNG implementation, used when one is not '
           'explicitly provided at seeding time.'))
 
+threefry_partitionable = config.define_bool_state(
+    name='jax_threefry_partitionable',
+    default=False,
+    upgrade=True,
+    help=('Enables internal threefry PRNG implementation changes that '
+    render it automatically partitionable'))
+
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',
     default=False,
