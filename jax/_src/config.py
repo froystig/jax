@@ -739,7 +739,7 @@ threefry_partitionable = config.define_bool_state(
     default=False,
     upgrade=True,
     help=('Enables internal threefry PRNG implementation changes that '
-    render it automatically partitionable'))
+          'render it automatically partitionable'))
 
 enable_custom_vjp_by_custom_transpose = config.define_bool_state(
     name='jax_enable_custom_vjp_by_custom_transpose',
