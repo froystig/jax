@@ -1072,7 +1072,7 @@ def _threefry_random_bits_partitionable(key: jnp.ndarray, bit_width, shape):
   counts = jnp.arange(n, dtype=jnp.uint32)
   circ = counts % (even_size // 2)
   k1, k2 = key
-  bits_xx, bits_yy = threefry_2x32(k1, k2, circ, circ + even_size // 2)
+  bits_xx, bits_yy = threefry2x32_p.bind(k1, k2, circ, circ + even_size // 2)
 
   dtype = UINT_DTYPES[bit_width]
   if bit_width == 64:

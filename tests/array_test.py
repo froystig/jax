@@ -765,5 +765,13 @@ class ShardingTest(jtu.JaxTestCase):
     repr(out.sharding)  # doesn't crash
 
 
+@jtu.with_config(jax_array=True)
+class RngShardingTest(jtu.JaxTestCase):
+  # tests that the PRNGs are automatically sharded as expected
+
+  def test_random_bits_is_pure_map(self, shape):
+    pass
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
