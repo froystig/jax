@@ -1,6 +1,6 @@
 absl-py
 # TODO(sharadmv,jakevdp): fix IPython3 issue and remove pinned version
-ipython<=8.6.0
+ipython<8.9.0
 sphinx>=4
 # TODO(jakevdp) unpin sphinx-autodoc-typehints when sphinx-book-theme
 # no longer requires sphinx<5
