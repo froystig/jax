@@ -115,6 +115,7 @@ def get_compile_options(
       auto_spmd_partitioning search space.
   """
   compile_options = xla_client.CompileOptions()
+  import ipdb; ipdb.set_trace()
   compile_options.num_replicas = num_replicas
   compile_options.num_partitions = num_partitions
   build_options = compile_options.executable_build_options

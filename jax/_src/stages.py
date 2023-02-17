@@ -146,7 +146,8 @@ class Executable(Protocol):
 class Lowering(Protocol):
   """Protocol for lowerings, which a user-facing ``Lowered`` encapsulates."""
 
-  def compile(self) -> Executable:
+  def compile(self, compiler_options: Optional[Dict[str, Any]] = None
+              ) -> Executable:
     """Compile and return a corresponding ``Executable``."""
     raise NotImplementedError
 
@@ -305,7 +306,8 @@ class XlaLowering(Lowering):
       with self.mhlo().context:
         return ir.Module.parse(module_str)
 
-  def compile(self) -> Executable:
+  def compile(self, compiler_options: Optional[Dict[str, Any]] = None
+              ) -> Executable:
     raise NotImplementedError("must override")
 
   def as_text(self, dialect: Optional[str] = None) -> str:
@@ -593,7 +595,8 @@ class Lowered(Stage):
         out_tree,
         no_kwargs=no_kwargs)
 
-  def compile(self) -> Compiled:
+  def compile(self, compiler_options: Optional[Dict[str, Any]] = None
+              ) -> Compiled:
     """Compile, returning a corresponding ``Compiled`` instance."""
     from jax._src.interpreters import pxla
 
@@ -608,7 +611,7 @@ class Lowered(Stage):
       kw = {}
 
     return Compiled(
-        self._lowering.compile(**kw),
+        self._lowering.compile(compiler_options=compiler_options, **kw),
         self.args_info,
         self.out_tree,
         no_kwargs=self._no_kwargs)

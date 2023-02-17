@@ -1008,16 +1008,17 @@ class XlaComputation(stages.XlaLowering):
     else:
       return super().stablehlo()
 
-  def compile(self) -> XlaCompiledComputation:
+  def compile(self, compiler_options: Optional[Dict[str, Any]] = None
+              ) -> XlaCompiledComputation:
     if self._executable is None:
       if self.is_trivial():
         self._executable = XlaCompiledComputation.from_trivial_jaxpr(
-            **self.compile_args)
+            compiler_options=compiler_options, **self.compile_args)
       else:
         assert self._out_type is not None
         self._executable = XlaCompiledComputation.from_xla_computation(
             self.name, self._hlo, self._in_type, self._out_type,
-            **self.compile_args)
+            compiler_options=compiler_options, **self.compile_args)
 
     return self._executable
 
@@ -1184,7 +1185,9 @@ class XlaCompiledComputation(stages.XlaExecutable):
                            has_unordered_effects: bool,
                            ordered_effects: List[core.Effect],
                            kept_var_idx: Set[int], keepalive: Optional[Any],
-                           host_callbacks: List[Any]) -> XlaCompiledComputation:
+                           host_callbacks: List[Any],
+                           compiler_options: Optional[Dict[str, Any]] = None
+                           ) -> XlaCompiledComputation:
     sticky_device = device
     input_handler = _input_handler(backend, in_type, out_type)
     result_handler = _result_handler(backend, sticky_device, out_type)
@@ -1220,7 +1223,9 @@ class XlaCompiledComputation(stages.XlaExecutable):
   def from_trivial_jaxpr(jaxpr, consts, device, in_avals, out_avals,
                          has_unordered_effects, ordered_effects, kept_var_idx,
                          keepalive: Optional[Any],
-                         host_callbacks: List[Any]) -> XlaCompiledComputation:
+                         host_callbacks: List[Any],
+                         compiler_options: Optional[Dict[str, Any]] = None
+                         ) -> XlaCompiledComputation:
     assert keepalive is None
     result_handlers = map(partial(aval_to_result_handler, device), out_avals)
     unsafe_call = partial(_execute_trivial, jaxpr, device, consts, out_avals,
