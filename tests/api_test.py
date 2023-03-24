@@ -72,6 +72,9 @@ import jax._src.util as jax_util
 from jax._src.ad_checkpoint import saved_residuals
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_name
 
+map, unsafe_map = jax_util.safe_map, map
+zip, unsafe_zip = jax_util.safe_zip, zip
+
 from jax.config import config
 config.parse_flags_with_absl()
 FLAGS = config.FLAGS
@@ -8444,17 +8447,17 @@ class CustomVJPTest(jtu.JaxTestCase):
     def f(x, y, z):
       return x, x
 
-    def fwd(x, y, z):
-      self.assertFalse(x[1])
-      self.assertTrue(y[1])
-      self.assertTrue(z[1])
-      return (x[0], x[0]), None
+    def fwd(is_zero, x, y, z):
+      self.assertFalse(is_zero(x))
+      self.assertTrue(is_zero(y))
+      self.assertTrue(is_zero(z))
+      return (x, x), None
 
-    def fwd_all(x, y, z):
-      self.assertFalse(x[1])
-      self.assertFalse(y[1])
-      self.assertFalse(z[1])
-      return (x[0], x[0]), None
+    def fwd_all(is_zero, x, y, z):
+      self.assertFalse(is_zero(x))
+      self.assertFalse(is_zero(y))
+      self.assertFalse(is_zero(z))
+      return (x, x), None
 
     def bwd_all(_, g):
       x1, x2 = g
@@ -8538,13 +8541,13 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     f = api.custom_vjp(f)
 
-    def fwd(*args):
-      xs, zeros = [x[0] for x in args], [x[1] for x in args]
+    def fwd(is_zero, *args):
+      zeros = map(is_zero, args)
       self.assertTrue(zeros[0])
       self.assertTrue(zeros[1])
       self.assertFalse(zeros[2])
       self.assertFalse(zeros[3])
-      return f(*xs), xs
+      return f(*args), args
 
     def bwd(res, g):
       static_scalar, *_ = res

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import dataclasses
 from functools import update_wrapper, reduce, partial
 import inspect
 from typing import (Callable, Generic, List, Optional, Sequence, Tuple, TypeVar, Any)
@@ -48,6 +47,8 @@ traceback_util.register_exclusion(__file__)
 
 map = safe_map
 zip = safe_zip
+
+T = TypeVar("T")
 
 allowed_effects: effects.EffectTypeSet = (
     effects.custom_derivatives_allowed_effects)
@@ -582,29 +583,17 @@ class custom_vjp(Generic[ReturnValue]):
       else:
         f_, dyn_args = lu.wrap_init(self.fun), args
         fwd, bwd = lu.wrap_init(self.fwd), lu.wrap_init(self.bwd)
-      fwd = _project_fwd(fwd, self.symbolic_zeros)
       args_flat, in_tree = tree_flatten(dyn_args)
       in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
       flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
-      flat_fwd, out_trees = _flatten_fwd(fwd, primal_name, fwd_name, in_tree,
-                                         out_type)
+      flat_fwd, out_trees = _flatten_fwd(fwd, self.symbolic_zeros, primal_name,
+                                         fwd_name, in_tree, out_type)
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees).call_wrapped
       out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees,
                                         symbolic_zeros=self.symbolic_zeros)
       _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)
       return tree_unflatten(out_tree, out_flat)
-
-@dataclasses.dataclass
-class ZeroTagged:
-  val: Any
-  zero: bool
-
-@lu.transformation
-def _project_fwd(symbolic_zeros, *args, **kwargs):
-  project_leaf = ((lambda x: (x.val, x.zero)) if symbolic_zeros else
-                  (lambda x:  x.val))
-  yield (yield tree_map(project_leaf, (args, kwargs)))
 
 def _check_for_tracers(x):
   for leaf in tree_leaves(x):
@@ -618,11 +607,21 @@ def _check_for_tracers(x):
             "arguments should typically not be indicated as nondiff_argnums.")
       raise UnexpectedTracerError(msg)
 
+def _halve_list(args: Sequence[T]) -> Tuple[List[T], List[T]]:
+  xs, ys = split_list(args, [len(args) // 2])
+  assert len(xs) == len(ys)
+  return xs, ys
+
 @lu.transformation_with_aux
-def _flatten_fwd(primal_name, fwd_name, in_tree, maybe_out_type,
-                 *args):
-  tagged_args = [ZeroTagged(x, z) for x, z in zip(args[::2], args[1::2])]
-  py_args = tree_unflatten(in_tree, tagged_args)
+def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree,
+                 maybe_out_type, *args):
+  flat_zeros, flat_args = _halve_list(args)
+  py_args = tree_unflatten(in_tree, flat_args)
+  if symbolic_zeros:
+    zero_ids = frozenset([id(x) for z, x in zip(flat_zeros, flat_args) if z])
+    def is_zero(x):
+      return id(x) in zero_ids
+    py_args = (is_zero, *py_args)
   pair_out = yield py_args, {}
   if not isinstance(pair_out, (list, tuple)) or len(pair_out) != 2:
     msg = (f"Custom VJP fwd rule {fwd_name} for function {primal_name} "

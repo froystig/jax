@@ -24,6 +24,7 @@ import numpy as np
 import jax
 from jax.config import config
 from jax.interpreters import partial_eval as pe
+from jax._src import api_util
 from jax._src import core
 from jax._src import source_info_util
 from jax._src import linear_util as lu
@@ -478,9 +479,9 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
     axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims)
                   if d is not not_mapped}
-    fwd_in_dims = [d for in_dim in in_dims for d in [in_dim, not_mapped]]
+    in_dims_fwd = (*([not_mapped] * len(in_dims)), *in_dims)
     fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
-    fwd, out_dims2 = batch_subtrace(fwd, self.main, fwd_in_dims)
+    fwd, out_dims2 = batch_subtrace(fwd, self.main, in_dims_fwd)
     bwd = batch_custom_vjp_bwd(bwd, self.axis_name, axis_size,
                                out_dims2, in_dims, self.main.trace_type,
                                self.spmd_axis_name)
@@ -596,6 +597,10 @@ def vtile(f_flat: lu.WrappedFun,
       f_flat, axis_name, tile_size, in_axes_flat, out_axes_flat, main_type=main_type))
 
 ### API for batching functions with jaxpr type inputs and outputs
+
+@lu.transformation
+def drop_fwd_zeros(*args, **kwargs):
+  yield (yield (args[1:], kwargs))
 
 @lu.transformation_with_aux
 def batch_subtrace(main, in_dims, *in_vals):

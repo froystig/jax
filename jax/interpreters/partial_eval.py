@@ -516,13 +516,13 @@ class JaxprTrace(Trace['JaxprTracer']):
 
     @_memoize
     def fwd_jaxpr_thunk(*zeros):
-      fwd_ = _interleave_fun(fwd, zeros)
+      fwd_ = _partial_leading(fwd, zeros)
       fwd_ = trace_to_subjaxpr_nounits(fwd_, self.main, True)
       fwd_, aux = partial_eval_wrapper_nounits(
           fwd_, tuple(in_knowns), tuple(in_avals))
       with core.new_sublevel():
         out_flat = fwd_.call_wrapped()
-      out_knowns, out_avals, jaxpr, env = aux()
+      _, _, jaxpr, env = aux()
       _, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
       converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
       return converted_jaxpr, (*res, *env)
@@ -1919,7 +1919,8 @@ class DynamicJaxprTrace(core.Trace):
     main_ = ref(self.main)
     @_memoize
     def fwd_jaxpr_from_zeros(*zeros):
-      fwd_ = _interleave_fun(fwd, zeros)
+      fwd_ = _partial_leading(fwd, zeros)
+      #import ipdb; ipdb.set_trace()
       return trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)[::2]
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
@@ -1981,9 +1982,8 @@ class DynamicJaxprTrace(core.Trace):
 custom_staging_rules: Dict[Primitive, Callable] = {}
 
 @lu.transformation
-def _interleave_fun(every_others, *args, **kwargs):
-  args_ = [x for pair in zip(args, every_others) for x in pair]
-  yield (yield (args_, kwargs))
+def _partial_leading(fixed_args, *args, **kwargs):
+  yield (yield ((*fixed_args, *args), kwargs))
 
 def _memoize(fn):
   cells = {}
