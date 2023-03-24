@@ -512,27 +512,25 @@ class custom_vjp(Generic[ReturnValue]):
         function, and the tuple elements may be arrays or nested
         tuples/lists/dicts thereof so as to match the structure of the primal
         input arguments.
-      symbolic_zeros: boolean, indicating whether to indicate symbolic zeros in
-        the ``fwd`` and ``bwd`` rules. Setting this option to ``True`` allows
-        custom derivative rules to detect when certain inputs, and when certain
-        cotangent outputs, are not involved in differentiation. If ``True``:
+      symbolic_zeros: boolean, determining whether to indicate symbolic zeros
+        to the ``fwd`` and ``bwd`` rules. Enabling this option allows custom
+        derivative rules to detect when certain inputs, and when certain
+        output cotangents, are not involved in differentiation. If ``True``:
 
-        * ``fwd`` must accept, for each leaf value ``x`` in the pytree
-          comprising an argument to the original function, a pair ``(x, zero)``,
-          where ``x`` is the original argument and ``zero`` is a boolean. The
-          ``zero`` part indicates whether or not the argument is not involved in
-          differentiation (i.e., whether the corresponding Jacobian "column" is
-          zero).
+        * ``fwd`` must accept, as its first argument, a boolean-valued function
+          ``is_zero``, followed by the original function arguments. For each
+          pytree leaf value ``x`` in the primal arguments, if ``is_zero(x)``
+          is ``True``, then ``x`` is not involved in differentiation (i.e., the
+          corresponding Jacobian "column" is zero).
 
         * ``bwd`` will be passed objects representing static symbolic zeros in
           its cotangent argument in correspondence with unperturbed values;
           otherwise, only standard JAX types (e.g. array-likes) are passed.
 
-        Setting this option to ``True`` allows these rules to detect whether
-        certain inputs and outputs are not involved in differentiation, but at
-        the cost of special handling: the signature of ``fwd`` changes, and
-        ``bwd`` receives objects that, for instance, cannot be passed to
-        ``jax.numpy`` functions. Default ``False``.
+        Evidently, setting this option to ``True`` gives the custom derivative
+        rules more power, but at the cost of extra handling: the signature of
+        ``fwd`` changes, and ``bwd`` receives objects that, for instance,
+        cannot be passed to ``jax.numpy`` functions. Default ``False``.
 
     Returns:
       None.
