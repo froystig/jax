@@ -8447,16 +8447,16 @@ class CustomVJPTest(jtu.JaxTestCase):
     def f(x, y, z):
       return x, x
 
-    def fwd(is_zero, x, y, z):
-      self.assertFalse(is_zero(x))
-      self.assertTrue(is_zero(y))
-      self.assertTrue(is_zero(z))
+    def fwd(is_nondiff, x, y, z):
+      self.assertFalse(is_nondiff(x))
+      self.assertTrue(is_nondiff(y))
+      self.assertTrue(is_nondiff(z))
       return (x, x), None
 
-    def fwd_all(is_zero, x, y, z):
-      self.assertFalse(is_zero(x))
-      self.assertFalse(is_zero(y))
-      self.assertFalse(is_zero(z))
+    def fwd_all(is_nondiff, x, y, z):
+      self.assertFalse(is_nondiff(x))
+      self.assertFalse(is_nondiff(y))
+      self.assertFalse(is_nondiff(z))
       return (x, x), None
 
     def bwd_all(_, g):
@@ -8541,8 +8541,8 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     f = api.custom_vjp(f)
 
-    def fwd(is_zero, *args):
-      zeros = map(is_zero, args)
+    def fwd(is_nondiff, *args):
+      zeros = map(is_nondiff, args)
       self.assertTrue(zeros[0])
       self.assertTrue(zeros[1])
       self.assertFalse(zeros[2])
@@ -8618,6 +8618,50 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     f.defvjp(fwd, bwd, symbolic_zeros=True)
     jax.grad(lambda x, y: jax.vmap(f)(x, y)[0].sum())(jnp.ones(3), jnp.ones(3))
+
+  def test_symbolic_zero_custom_vjp_custom_pytree(self):
+    @tree_util.register_pytree_node_class
+    class Box:
+      def __init__(self_, x_):
+        self.assertIs(x_, x)
+        self_.x = x_
+
+      def tree_flatten(self_):
+        return [self_.x], None
+      
+      @classmethod
+      def tree_unflatten(cls, _, xs):
+        return cls(*xs)
+
+    x, y = Box(jnp.array(72.)), jnp.array(73.)
+
+    @api.custom_vjp
+    def f(box, y):
+      return box.x * y
+    
+    def fwd0(is_nondiff, box, y):
+      self.assertFalse(is_nondiff(box.x))
+      self.assertTrue(is_nondiff(y))
+      return f(box, y), (box, y)
+
+    def bwd0(res, g):
+      box, y = res
+      return y * g, box.x * g
+
+    def fwd1(is_nondiff, box, y):
+      self.assertTrue(is_nondiff(box.x))
+      self.assertFalse(is_nondiff(y))
+      return f(box.x, y), (box, y)
+
+    def bwd1(res, g):
+      box, y = res
+      return y * g, box.x * g
+    
+    f.defvjp(fwd0, bwd0, symbolic_zeros=True)
+    jax.grad(f, argnums=0)(x, y)
+    f.defvjp(fwd1, bwd1, symbolic_zeros=True)
+    jax.grad(f, argnums=1)(x, y)
+
 
 def transpose_unary(f, x_example):
   def transposed(y):

@@ -48,8 +48,6 @@ traceback_util.register_exclusion(__file__)
 map = safe_map
 zip = safe_zip
 
-T = TypeVar("T")
-
 allowed_effects: effects.EffectTypeSet = (
     effects.custom_derivatives_allowed_effects)
 
@@ -518,8 +516,8 @@ class custom_vjp(Generic[ReturnValue]):
         output cotangents, are not involved in differentiation. If ``True``:
 
         * ``fwd`` must accept, as its first argument, a boolean-valued function
-          ``is_zero``, followed by the original function arguments. For each
-          pytree leaf value ``x`` in the primal arguments, if ``is_zero(x)``
+          ``is_nondiff``, followed by the original function arguments. For each
+          pytree leaf value ``x`` in the primal arguments, if ``is_nondiff(x)``
           is ``True``, then ``x`` is not involved in differentiation (i.e., the
           corresponding Jacobian "column" is zero).
 
