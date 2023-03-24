@@ -607,15 +607,11 @@ def _check_for_tracers(x):
             "arguments should typically not be indicated as nondiff_argnums.")
       raise UnexpectedTracerError(msg)
 
-def _halve_list(args: Sequence[T]) -> Tuple[List[T], List[T]]:
-  xs, ys = split_list(args, [len(args) // 2])
-  assert len(xs) == len(ys)
-  return xs, ys
-
 @lu.transformation_with_aux
 def _flatten_fwd(symbolic_zeros, primal_name, fwd_name, in_tree,
                  maybe_out_type, *args):
-  flat_zeros, flat_args = _halve_list(args)
+  flat_zeros, flat_args = split_list(args, [len(args) // 2])
+  assert len(flat_zeros) == len(flat_args)
   py_args = tree_unflatten(in_tree, flat_args)
   if symbolic_zeros:
     zero_ids = frozenset([id(x) for z, x in zip(flat_zeros, flat_args) if z])

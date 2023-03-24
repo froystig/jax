@@ -926,7 +926,8 @@ def custom_vjp_call_jaxpr_rule(in_err, enabled_errors, *in_vals, fun_jaxpr,
   @lu.wrap_init
   def fwd(*args):
     # TODO(lenamartens, sharadmv): why not checkify here?
-    xs, zeros = args[::2], args[1::2]
+    zeros, xs = split_list(args, [len(args) // 2])
+    assert len(zeros) == len(xs)
     fwd_jaxpr, fwd_consts = fwd_jaxpr_thunk(*zeros)
     xs_without_consts = xs[num_consts:]
     return core.eval_jaxpr(fwd_jaxpr, fwd_consts, *xs_without_consts)

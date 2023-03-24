@@ -1920,7 +1920,6 @@ class DynamicJaxprTrace(core.Trace):
     @_memoize
     def fwd_jaxpr_from_zeros(*zeros):
       fwd_ = _partial_leading(fwd, zeros)
-      #import ipdb; ipdb.set_trace()
       return trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)[::2]
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]

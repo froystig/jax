@@ -8612,8 +8612,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return f(x, y), None
 
     def bwd(_, g):
-      ct_x, ct_y = g
-      #import ipdb; ipdb.set_trace()
+      _, ct_y = g
       self.assertIs(type(ct_y), custom_derivatives_public.SymbolicZero)
       return g
 
