@@ -39,6 +39,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import config as jax_config
 from jax._src import effects
+from jax._src import jaxpr
 from jax._src.config import FLAGS, config
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError,
@@ -156,6 +157,8 @@ def jaxprs_in_params(params) -> Iterator[Jaxpr]:
         yield v
       elif isinstance(v, ClosedJaxpr):
         yield v.jaxpr
+      elif isinstance(v, jaxpr.Jaxpr):
+        yield v
 
 
 def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
@@ -167,7 +170,29 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
     yield from jaxprs_in_params(eqn.params)
 
 
-class ClosedJaxpr:
+class ClosedJaxpr(jaxpr.Jaxpr):
+  def __init__(self, open_jaxpr, consts):
+    assert len(consts) == len(open_jaxpr.constvars)
+    super().__init__(list(consts), open_jaxpr.constvars, open_jaxpr.invars,
+                     open_jaxpr.outvars, open_jaxpr.eqns, open_jaxpr.effects,
+                     open_jaxpr.debug_info)
+
+  @property
+  def jaxpr(self):
+    #return jaxpr.Jaxpr._from_open_jaxpr(self, self.consts)
+    return Jaxpr(self.constvars, self.invars, self.outvars, self.eqns,
+                 self.effects, self.debug_info)
+
+  def replace(self, *, jaxpr=None, consts=None):
+    jaxpr = self if jaxpr is None else jaxpr
+    consts = self.consts if consts is None else consts
+    return ClosedJaxpr(jaxpr, consts)
+
+  def map_jaxpr(self, f):
+    return ClosedJaxpr(f(self.jaxpr), self.consts)
+
+
+class ClosedJaxpr2:
   __slots__ = ['__weakref__', '_jaxpr', '_consts']
 
   _jaxpr: Jaxpr

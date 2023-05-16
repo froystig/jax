@@ -18,6 +18,7 @@ from functools import partial
 from typing import Callable, Optional, Sequence
 
 from jax._src import core
+#from jax._src import jaxpr
 from jax._src import linear_util as lu
 from jax._src.lax import lax
 from jax._src.effects import control_flow_allowed_effects as allowed_effects
@@ -57,9 +58,10 @@ def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
 @weakref_lru_cache
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
                          primitive_name: Optional[str] = None):
-  jaxpr, consts, out_tree = _initial_style_open_jaxpr(
+  jaxpr_, consts, out_tree = _initial_style_open_jaxpr(
       fun, in_tree, in_avals, primitive_name)
-  closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+  closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr_), ())
+  #closed_jaxpr = jaxpr.Jaxpr._from_closed_jaxpr(closed_jaxpr)
   return closed_jaxpr, consts, out_tree
 
 @cache()

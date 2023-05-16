@@ -272,6 +272,7 @@ def split_merge(predicate, xs):
 
 def cache(max_size=4096):
   def wrap(f):
+    #return _Cached(f)
     @functools.lru_cache(max_size)
     def cached(_, *args, **kwargs):
       return f(*args, **kwargs)
@@ -290,6 +291,11 @@ def cache(max_size=4096):
 
 memoize = cache(max_size=None)
 
+class _Cached:
+  def __init__(self, f): self.f = f
+  def cache_clear(self): pass
+  def __call__(self, *args, **kwargs): return self.f(*args, **kwargs)
+
 def weakref_lru_cache(call: Callable, maxsize=2048):
   """
   Least recently used cache decorator with weakref support.
@@ -298,6 +304,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   and strong refs to all subsequent operations. In all other respects it should
   behave similar to `functools.lru_cache`.
   """
+  #return _Cached(call)
   global _weakref_lru_caches
   cached_call = xc.weakref_lru_cache(config._trace_context, call, maxsize)
   _weakref_lru_caches.add(cached_call)

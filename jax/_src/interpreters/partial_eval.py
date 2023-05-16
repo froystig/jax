@@ -33,6 +33,7 @@ from jax._src import api_util
 from jax._src import core
 from jax._src import effects
 from jax._src import dtypes
+#from jax._src import jaxpr
 from jax._src import profiler
 from jax._src import source_info_util
 from jax._src.api_util import (flattened_fun_in_tree, flatten_fun_nokwargs,
@@ -1491,8 +1492,9 @@ def dce_jaxpr_closed_call_rule(used_outputs: List[bool], eqn: JaxprEqn
 dce_rules[core.closed_call_p] = dce_jaxpr_closed_call_rule
 
 @weakref_lru_cache
-def close_jaxpr(jaxpr: Jaxpr) -> ClosedJaxpr:
-  return ClosedJaxpr(jaxpr, ())
+def close_jaxpr(jaxpr_: Jaxpr) -> ClosedJaxpr:
+  #return jaxpr.Jaxpr._from_open_jaxpr(jaxpr_, ())
+  return ClosedJaxpr(jaxpr_, ())
 
 def move_binders_to_front(closed_jaxpr: ClosedJaxpr, to_move: Sequence[bool]
                           ) -> ClosedJaxpr:
