@@ -39,7 +39,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import config as jax_config
 from jax._src import effects
-from jax._src import jaxpr
+from jax._src import lang
 from jax._src.config import FLAGS, config
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError,
@@ -75,7 +75,7 @@ class JaxprDebugInfo(NamedTuple):
   arg_names: Tuple[Optional[str], ...]     # e.g. ('args[0]', ... )
   result_paths: Tuple[Optional[str], ...]  # e.g. ('[0]', '[1]', ...)
 
-class Jaxpr:
+class Jaxpr(lang.Jaxpr):
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
                '_effects', '_debug_info']
 
@@ -157,7 +157,7 @@ def jaxprs_in_params(params) -> Iterator[Jaxpr]:
         yield v
       elif isinstance(v, ClosedJaxpr):
         yield v.jaxpr
-      elif isinstance(v, jaxpr.Jaxpr):
+      elif isinstance(v, lang.Jaxpr):
         yield v
 
 
@@ -170,7 +170,7 @@ def subjaxprs(jaxpr: Jaxpr) -> Iterator[Jaxpr]:
     yield from jaxprs_in_params(eqn.params)
 
 
-class ClosedJaxpr(jaxpr.Jaxpr):
+class ClosedJaxpr(lang.Jaxpr):
   def __init__(self, open_jaxpr, consts):
     assert len(consts) == len(open_jaxpr.constvars)
     super().__init__(list(consts), open_jaxpr.constvars, open_jaxpr.invars,
@@ -179,7 +179,7 @@ class ClosedJaxpr(jaxpr.Jaxpr):
 
   @property
   def jaxpr(self):
-    #return jaxpr.Jaxpr._from_open_jaxpr(self, self.consts)
+    #return lang.Jaxpr._from_open_jaxpr(self, self.consts)
     return Jaxpr(self.constvars, self.invars, self.outvars, self.eqns,
                  self.effects, self.debug_info)
 
