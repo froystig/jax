@@ -24,7 +24,7 @@ import warnings
 
 import jax
 from jax._src import effects
-import jax._src.pretty_printer as pp
+from jax._src import pretty_printer as pp
 
 
 Effect = effects.Effect

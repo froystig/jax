@@ -76,6 +76,14 @@ class JaxprDebugInfo(NamedTuple):
   result_paths: Tuple[Optional[str], ...]  # e.g. ('[0]', '[1]', ...)
 
 class Jaxpr(lang.Jaxpr):
+  def __init__(self, constvars: Sequence[Var], invars: Sequence[Var],
+               outvars: Sequence[Atom], eqns: Sequence[JaxprEqn],
+               effects: Effects = no_effects,
+               debug_info: Optional[JaxprDebugInfo] = None):
+    super().__init__([], constvars, invars, outvars, eqns, effects, debug_info)
+
+
+class Jaxpr2:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
                '_effects', '_debug_info']
 
@@ -179,7 +187,8 @@ class ClosedJaxpr(lang.Jaxpr):
 
   @property
   def jaxpr(self):
-    #return lang.Jaxpr._from_open_jaxpr(self, self.consts)
+    warnings.warn('deprecated `jaxpr` attribute of ClosedJaxpr',
+                  DeprecationWarning)
     return Jaxpr(self.constvars, self.invars, self.outvars, self.eqns,
                  self.effects, self.debug_info)
 
@@ -2701,7 +2710,7 @@ def _check_closed_call(_, *in_atoms, call_jaxpr):
   return call_jaxpr.out_avals, call_jaxpr.effects
 custom_typechecks[closed_call_p] = _check_closed_call
 
-def check_jaxpr(jaxpr: Jaxpr):
+def check_jaxpr(jaxpr: ClosedJaxpr):
   """Checks well-formedness of a jaxpr.
 
   Specifically, check that:
@@ -2736,7 +2745,7 @@ def check_jaxpr(jaxpr: Jaxpr):
 
 def _check_jaxpr(
     ctx_factory: Callable[[], Tuple[JaxprPpContext, JaxprPpSettings]],
-    jaxpr: Jaxpr
+    jaxpr: ClosedJaxpr
   ) -> None:
   # Use set of variables to types to check that variables are in scope.
   env: Set[Var] = set()

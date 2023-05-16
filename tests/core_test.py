@@ -438,9 +438,9 @@ class JaxprTypeChecks(jtu.JaxTestCase):
         lambda: core.check_jaxpr(jaxpr))
 
   def test_check_jaxpr_cond_invalid(self):
-    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.).jaxpr
+    jaxpr = make_jaxpr(lambda x: lax.switch(0, [jnp.sin, jnp.cos], x))(1.)
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].jaxpr._invars = ()
+    cond.params['branches'][0]._invars = ()
     self.assertRaisesRegex(
         core.JaxprTypeError,
         'cond branch 0 takes 0 inputs, branch 1 takes 1',
@@ -471,10 +471,10 @@ class JaxprTypeChecks(jtu.JaxTestCase):
       return g
 
     jaxpr = make_jaxpr(enlarge(
-        lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.).jaxpr
+        lambda x: lax.switch(0, [jnp.sin, jnp.cos], x), 100))(1.)
 
     cond = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'cond')
-    cond.params['branches'][0].jaxpr._invars = ()
+    cond.params['branches'][0]._invars = ()
     msg = ''
     try:
       core.check_jaxpr(jaxpr)
