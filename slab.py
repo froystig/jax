@@ -37,7 +37,7 @@ class SlabView(NamedTuple):
     return len(self.shape)
 
 def slab_make(sz, dtype):
-  return Slab(jnp.zeros((1, sz), dtype=dtype), jnp.array(0, dtype=int))
+  return Slab(jnp.zeros(sz, dtype=dtype), jnp.array(0, dtype=int))
 
 def slab_alloc(slab, shape):
   sz = jnp.prod(jnp.array(shape))
@@ -47,12 +47,12 @@ def slab_alloc(slab, shape):
 
 def slab_read(slab, addr, shape):
   sz = np.prod(shape)
-  flat = jax.lax.dynamic_slice_in_dim(slab.data, addr, sz, axis=1)
+  flat = jax.lax.dynamic_slice_in_dim(slab.data, addr, sz, axis=0)
   return flat.reshape(shape)
 
 def slab_write(slab, addr, y):
-  flat = jnp.reshape(y, (1, -1))
-  data = jax.lax.dynamic_update_slice_in_dim(slab.data, flat, addr, axis=1)
+  flat = jnp.ravel(y)
+  data = jax.lax.dynamic_update_slice_in_dim(slab.data, flat, addr, axis=0)
   return Slab(data, slab.cursor)
 
 def tile_loop_bounds(operands):
@@ -143,10 +143,10 @@ def main(args):
   print('mul:', z)
   print()
   print('-- slab space')
-  print('arg:', slab.data[0, :sz])
-  print('arg:', slab.data[0, sz:sz * 2])
-  print('add:', slab.data[0, sz * 2:sz * 3])
-  print('mul:', slab.data[0, sz * 3:sz * 4])
+  print('arg:', slab.data[:sz])
+  print('arg:', slab.data[sz:sz * 2])
+  print('add:', slab.data[sz * 2:sz * 3])
+  print('mul:', slab.data[sz * 3:sz * 4])
   print()
   print('-- read off slab')
   print(slab_read(slab, y.addr, shape))
