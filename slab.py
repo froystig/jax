@@ -159,7 +159,32 @@ def slab_write(slab, view, slice_base: DShape, inval: jax.Array):
         new_slab, s, slab_addr, axis=0)
   return Slab(new_slab, slab.cursor)
 
-def elementwise(f, slab: Slab, x: SlabView, y: SlabView, out: SlabView):
+def elementwise1(f, slab: Slab, x: SlabView, out: SlabView):
+  # todo: check out as well
+  tiled_shape = map(xceil_div, x.shape, tile_shape(x.shape, x.dtype))
+  x_sz_p = xprod(tiled_shape) * tile_phrases(x.shape, x.dtype)
+  compute_tile_p = 16
+  num_whole_blocks = x_sz_p // compute_tile_p
+
+  def f_u32(a):
+    cast = lambda i: reinterpret_cast(i, a.shape, x.dtype)
+    return reinterpret_cast(f(cast(a)), a.shape, jnp.dtype('uint32'))
+
+  def body(i_b, mem):
+    i_p = i_b * compute_tile_p
+    x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + i_p, compute_tile_p)
+    z_slice = f_u32(x_slice)
+    return jax.lax.dynamic_update_slice_in_dim(
+        mem, z_slice, out.addr + i_p, axis=0)
+  mem = jax.lax.fori_loop(0, num_whole_blocks, body, slab.data)
+
+  epi_start_p = num_whole_blocks * compute_tile_p
+  epi_size_p = x_sz_p - epi_start_p
+  x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + epi_start_p, compute_tile_p)
+  z_slice = f_u32(x_slice)
+  return Slab(masked_store(mem, out.addr + epi_start_p, z_slice, epi_size_p), slab.cursor)
+
+def elementwise2(f, slab: Slab, x: SlabView, y: SlabView, out: SlabView):
   if x.shape != y.shape:
     raise ValueError(x.shape, y.shape)
   if x.dtype != y.dtype:
@@ -221,24 +246,23 @@ def _matmul(slab: Slab, lhs: SlabView, rhs: SlabView, out: SlabView):
   mem = jax.lax.fori_loop(0, n_tiles, loop_n, mem)
   return mem
 
-def make_binop(op, ref_op):
-  def binop(slab, x: SlabView, y: SlabView):
-    out_sds = jax.eval_shape(ref_op,
-                             jax.ShapeDtypeStruct(x.shape, x.dtype),
-                             jax.ShapeDtypeStruct(y.shape, y.dtype))
+def make_allocating_op(op, ref_op):
+  def made_op(slab, *xs: SlabView):
+    out_sds = jax.eval_shape(
+        ref_op, *[jax.ShapeDtypeStruct(x.shape, x.dtype) for x in xs])
     slab, out = slab_alloc(slab, out_sds.shape, out_sds.dtype)
-    slab = op(slab, x, y, out)
+    slab = op(slab, *[*xs, out])
     return slab, out
-  return binop
+  return made_op
 
-add = make_binop(partial(elementwise, jax.lax.add), jax.lax.add)
-mul = make_binop(partial(elementwise, jax.lax.mul), jax.lax.mul)
-matmul = make_binop(_matmul, lambda a, b: a @ b)
+add = make_allocating_op(partial(elementwise2, jax.lax.add), jax.lax.add)
+mul = make_allocating_op(partial(elementwise2, jax.lax.mul), jax.lax.mul)
+tanh = make_allocating_op(partial(elementwise1, jax.lax.tanh), jax.lax.tanh)
+matmul = make_allocating_op(_matmul, lambda a, b: a @ b)
 
 def parse_arr(i, s):
   shape = eval(s)
-  z = 3 * i + jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
-  return z
+  return np.random.RandomState(i).normal(size=shape).astype(np.float32)
 
 def print_seg(msg):
   print()
@@ -266,43 +290,44 @@ def test_binop(op, ref_op, slab, x, y):
   slab, xv = slab_upload(slab, x)
   slab, yv = slab_upload(slab, y)
   slab, zv = op(slab, xv, yv)
-  assert jnp.allclose(slab_download(slab, xv), x)
-  assert jnp.allclose(slab_download(slab, yv), y)
-  assert jnp.allclose(slab_download(slab, zv), z)
+  assert jnp.allclose(slab_download(slab, xv), x, atol=1e-4)
+  assert jnp.allclose(slab_download(slab, yv), y, atol=1e-4)
+  assert jnp.allclose(slab_download(slab, zv), z, atol=1e-4)
 
 def main(args):
   xs = map(parse_arr, range(len(args)), args)
-
-  sz = xs[0].size
-  shape = xs[0].shape
   assert all(len(x.shape) == 2 for x in xs)
 
   slab = slab_make(1024)
-  print_seg('slab after init')
-  print(slab)
 
-  test_binop(add, jax.lax.add, slab, *xs)
-  test_binop(mul, jax.lax.mul, slab, *xs)
-  test_binop(matmul, lambda a, b: a @ b, slab, xs[0], xs[1].T)
+  x, y, *_ = xs
+  test_binop(add, jax.lax.add, slab, x, x)
+  test_binop(mul, jax.lax.mul, slab, x, x)
+  test_binop(matmul, lambda a, b: a @ b, slab, x, y)
 
   vals = []
   for x in xs:
-    slab, v = slab_alloc(slab, x.shape, x.dtype)
+    slab, v = slab_upload(slab, x)
     vals.append(v)
-    slab = slab_write(slab, v, (0, 0), x)
     print_seg('slab after write')
     print_seg('slab_read result')
-    print(slab_read(slab, v, (0, 0), x.shape))
+    print(slab_download(slab, v))
 
   if len(vals) >= 2:
     x, y, *_ = vals
-    slab, z = mul(slab, x, y)
+    slab, z = mul(slab, x, x)
     print_seg('mul')
-    print(slab_read(slab, z, (0, 0), z.shape))
+    print(slab_download(slab, z))
     slab, w = add(slab, x, z)
     print_seg('add')
-    print(slab_read(slab, w, (0, 0), w.shape))
+    print(slab_download(slab, w))
 
 
 if __name__ == '__main__':
+  import ipdb, sys, traceback
+  def info(t, v, i):
+    traceback.print_exception(t, v, i)
+    ipdb.pm()
+  sys.excepthook = info
+
   main(sys.argv[1:])
