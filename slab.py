@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial, reduce
-from typing import Iterable, NamedTuple, Union
+from typing import Iterable, NamedTuple, Sequence, Union
 import sys
 
 import numpy as np
@@ -106,8 +106,8 @@ def strides(xs):
 
 def slab_slices(view, slice_base_e: DShape, slice_shape_e: SShape):
   view_shape_e = tile_shape(view.shape, view.dtype)
-  # dassert all(slice_base  % view_shape_t == 0)
-  # dassert all(slice_shape % view_shape_t == 0)
+  # dassert all(s % t == 0 for s, t in zip(slice_base,  view_shape_e))
+  # dassert all(s % t == 0 for s, t in zip(slice_shape, view_shape_e))
   slice_base_t  = [s // t for s, t in zip(slice_base_e,  view_shape_e)]
   slice_shape_t = [s // t for s, t in zip(slice_shape_e, view_shape_e)]
   tiled_shape = map(xceil_div, view.shape, view_shape_e)
@@ -159,37 +159,19 @@ def slab_write(slab, view, slice_base: DShape, inval: jax.Array):
         new_slab, s, slab_addr, axis=0)
   return Slab(new_slab, slab.cursor)
 
-def elementwise1(f, slab: Slab, x: SlabView, out: SlabView):
-  # todo: check out as well
-  tiled_shape = map(xceil_div, x.shape, tile_shape(x.shape, x.dtype))
-  x_sz_p = xprod(tiled_shape) * tile_phrases(x.shape, x.dtype)
-  compute_tile_p = 16
-  num_whole_blocks = x_sz_p // compute_tile_p
+def elementwise(f, slab: Slab, xs: Sequence[SlabView], out: SlabView):
+  if len(xs) == 0:
+    raise TypeError('missing input arguments')
+  x = xs[0]
+  for y in xs[1:]:
+    if x.shape != y.shape:
+      raise ValueError(f'elementwise shapes mismatch: {x.shape} != {y.shape}')
+    if x.dtype != y.dtype:
+      raise ValueError(f'elementwise dtypes mismatch: {x.dtype} != {y.dtype}')
+  if x.shape != out.shape:
+    raise ValueError(
+        f'elementwise input/output shape mismatch: {x.shape} != {out.shape}')
 
-  def f_u32(a):
-    cast = lambda i: reinterpret_cast(i, a.shape, x.dtype)
-    return reinterpret_cast(f(cast(a)), a.shape, jnp.dtype('uint32'))
-
-  def body(i_b, mem):
-    i_p = i_b * compute_tile_p
-    x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + i_p, compute_tile_p)
-    z_slice = f_u32(x_slice)
-    return jax.lax.dynamic_update_slice_in_dim(
-        mem, z_slice, out.addr + i_p, axis=0)
-  mem = jax.lax.fori_loop(0, num_whole_blocks, body, slab.data)
-
-  epi_start_p = num_whole_blocks * compute_tile_p
-  epi_size_p = x_sz_p - epi_start_p
-  x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + epi_start_p, compute_tile_p)
-  z_slice = f_u32(x_slice)
-  return Slab(masked_store(mem, out.addr + epi_start_p, z_slice, epi_size_p), slab.cursor)
-
-def elementwise2(f, slab: Slab, x: SlabView, y: SlabView, out: SlabView):
-  if x.shape != y.shape:
-    raise ValueError(x.shape, y.shape)
-  if x.dtype != y.dtype:
-    raise ValueError(x.dtype, y.dtype)
-  # todo: check out as well
   tiled_shape = map(xceil_div, x.shape, tile_shape(x.shape, x.dtype))
   x_sz_p = xprod(tiled_shape) * tile_phrases(x.shape, x.dtype)
   compute_tile_p = 16
@@ -198,22 +180,31 @@ def elementwise2(f, slab: Slab, x: SlabView, y: SlabView, out: SlabView):
   def f_u32(a, b):
     cast = lambda i: reinterpret_cast(i, a.shape, x.dtype)
     return reinterpret_cast(f(cast(a), cast(b)), a.shape, jnp.dtype('uint32'))
-  
+
+  def f_u32(*zs):
+    a = zs[0]
+    return reinterpret_cast(
+        f(*[reinterpret_cast(z, a.shape, x.dtype) for z in zs]),
+        a.shape, jnp.dtype('uint32'))
+
   def body(i_b, mem):
     i_p = i_b * compute_tile_p
-    x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + i_p, compute_tile_p)
-    y_slice = jax.lax.dynamic_slice_in_dim(mem, y.addr + i_p, compute_tile_p)
-    z_slice = f_u32(x_slice, y_slice)
+    slices = [
+        jax.lax.dynamic_slice_in_dim(mem, z.addr + i_p, compute_tile_p)
+        for z in xs]
+    out_slice = f_u32(*slices)
     return jax.lax.dynamic_update_slice_in_dim(
-        mem, z_slice, out.addr + i_p, axis=0)
+        mem, out_slice, out.addr + i_p, axis=0)
   mem = jax.lax.fori_loop(0, num_whole_blocks, body, slab.data)
   
   epi_start_p = num_whole_blocks * compute_tile_p
   epi_size_p = x_sz_p - epi_start_p
-  x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + epi_start_p, compute_tile_p)
-  y_slice = jax.lax.dynamic_slice_in_dim(mem, y.addr + epi_start_p, compute_tile_p)
-  z_slice = f_u32(x_slice, y_slice)
-  return Slab(masked_store(mem, out.addr + epi_start_p, z_slice, epi_size_p), slab.cursor)
+  slices = [
+      jax.lax.dynamic_slice_in_dim(mem, z.addr + epi_start_p, compute_tile_p)
+      for z in xs]
+  out_slice = f_u32(*slices)
+  return Slab(masked_store(mem, out.addr + epi_start_p, out_slice, epi_size_p),
+              slab.cursor)
 
 def masked_store(mem, addr, update, num_p):
   update_p = update.shape[0]
@@ -221,7 +212,8 @@ def masked_store(mem, addr, update, num_p):
   new_val = jnp.where(jnp.arange(update_p)[:, None] < num_p, update, prev_val)
   return jax.lax.dynamic_update_slice_in_dim(mem, new_val, addr, axis=0)
 
-def _matmul(slab: Slab, lhs: SlabView, rhs: SlabView, out: SlabView):
+def _matmul(slab: Slab, ins: Sequence[SlabView], out: SlabView):
+  lhs, rhs = ins
   dtype = lhs.dtype
   n, k, m = (*lhs.shape, rhs.shape[1])
   # todo: shape + dtype check
@@ -251,13 +243,13 @@ def make_allocating_op(op, ref_op):
     out_sds = jax.eval_shape(
         ref_op, *[jax.ShapeDtypeStruct(x.shape, x.dtype) for x in xs])
     slab, out = slab_alloc(slab, out_sds.shape, out_sds.dtype)
-    slab = op(slab, *[*xs, out])
+    slab = op(slab, xs, out)
     return slab, out
   return made_op
 
-add = make_allocating_op(partial(elementwise2, jax.lax.add), jax.lax.add)
-mul = make_allocating_op(partial(elementwise2, jax.lax.mul), jax.lax.mul)
-tanh = make_allocating_op(partial(elementwise1, jax.lax.tanh), jax.lax.tanh)
+add = make_allocating_op(partial(elementwise, jax.lax.add), jax.lax.add)
+mul = make_allocating_op(partial(elementwise, jax.lax.mul), jax.lax.mul)
+tanh = make_allocating_op(partial(elementwise, jax.lax.tanh), jax.lax.tanh)
 matmul = make_allocating_op(_matmul, lambda a, b: a @ b)
 
 def parse_arr(i, s):
