@@ -277,6 +277,18 @@ def slab_upload(slab, x):
   slab = slab_write(slab, xv, (0,) * x.ndim, x)
   return slab, xv
 
+def chain(slab, fs, *argss, unary=False):
+  if callable(fs):
+    fs = [fs] * len(argss)
+  outss = []
+  for f, args in zip(fs, argss):
+    if unary:
+      slab, outs = f(slab, args)
+    else:
+      slab, outs = f(slab, *args)
+    outss.append(outs)
+  return slab, outss
+
 def test_binop(op, ref_op, slab, x, y):
   z = ref_op(x, y)
   slab, xv = slab_upload(slab, x)
@@ -297,13 +309,13 @@ def main(args):
   test_binop(mul, jax.lax.mul, slab, x, x)
   test_binop(matmul, lambda a, b: a @ b, slab, x, y)
 
-  vals = []
-  for x in xs:
+  def put(slab, x):
     slab, v = slab_upload(slab, x)
-    vals.append(v)
-    print_seg('slab after write')
     print_seg('slab_read result')
     print(slab_download(slab, v))
+    return slab, v
+
+  slab, vals = chain(slab, put, *xs, unary=True)
 
   if len(vals) >= 2:
     x, y, *_ = vals
