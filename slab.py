@@ -250,7 +250,13 @@ def make_allocating_op(op, ref_op):
 add = make_allocating_op(partial(elementwise, jax.lax.add), jax.lax.add)
 mul = make_allocating_op(partial(elementwise, jax.lax.mul), jax.lax.mul)
 tanh = make_allocating_op(partial(elementwise, jax.lax.tanh), jax.lax.tanh)
-matmul = make_allocating_op(_matmul, lambda a, b: a @ b)
+# TODO(frostig,mattjj): eval_shape fails
+#matmul = make_allocating_op(_matmul, lambda a, b: a @ b)
+def matmul(slab, av, bv):
+  out_shape = (av.shape[0], bv.shape[1])
+  slab, out = slab_alloc(slab, out_shape, av.dtype)
+  slab = _matmul(slab, (av, bv), out)
+  return slab, out
 
 def parse_arr(i, s):
   shape = eval(s)
