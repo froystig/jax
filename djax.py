@@ -56,7 +56,6 @@ def djit(f, abstracted_axes, **djit_kwargs):
     slab, out_views = interp(
         djaxpr, abstracted_axes, tuple(dim_index.items()),
         tuple(v.dtype for v in views), slab, sizes, [v.addr for v in views])
-    breakpoint()
     return slab, tuple(sl.slab_download(slab, v) for v in out_views)
 
   return f_wrapped
@@ -126,13 +125,12 @@ def test(slab, xs):
   slab, [c] = f_djit(slab, a, b)
   print(c)
 
-  # TODO(frostig,mattjj): bug, needs pjit const forwarding
-  # print_seg('djax -> jax lowering')
-  # big_jaxpr = jax.make_jaxpr(f_djit)(slab, a, b)
-  # print('\n'.join(str(big_jaxpr).split('\n')[:20]))
-  # print('...')
-  # print('\n'.join(str(big_jaxpr).split('\n')[-20:]))
-  # print(len(str(big_jaxpr).split('\n')))
+  print_seg('djax -> jax lowering')
+  big_jaxpr = jax.make_jaxpr(f_djit)(slab, a, b)
+  print('\n'.join(str(big_jaxpr).split('\n')[:20]))
+  print('...')
+  print('\n'.join(str(big_jaxpr).split('\n')[-20:]))
+  print(len(str(big_jaxpr).split('\n')))
 
   check_djit(slab, f, abstracted_axes, a, b)
 

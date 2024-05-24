@@ -9,6 +9,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
+from jax._src import core
 from jax._src import util
 
 map, zip = util.safe_map, util.safe_zip
@@ -276,7 +277,11 @@ def make_jaxpr_slab_read(slab, view, outval_shape):
       lambda slab: slab_read(slab, view, (0, 0), outval_shape))(slab)
 
 def slab_download(slab, v):
+  if not static_shape(v.shape): raise Exception
   return slab_read(slab, v, (0,) * v.ndim(), v.shape)
+
+def static_shape(s: DShape) -> bool:
+  return all(isinstance(core.get_aval(d), core.ConcreteArray) for d in s)
 
 def slab_upload(slab, x):
   slab, xv = slab_alloc(slab, x.shape, x.dtype)
