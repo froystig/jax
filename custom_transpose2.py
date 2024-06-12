@@ -100,7 +100,7 @@ def custom_transpose_transpose(cts, *args, call, rule, num_consts,
   lin_by_rule_flat, lin_tree_by_rule = tree_flatten(lin_by_rule)
   assert lin_tree == lin_tree_by_rule, 'todo error'
   # todo check lin_by_rule_flat avals against lin_flat avals
-  return lin_by_rule_flat
+  return [None] * res_tree.num_leaves + lin_by_rule_flat
 
 custom_transpose_p = core.Primitive('custom_transpose_call')
 custom_transpose_p.multiple_results = True
@@ -120,7 +120,6 @@ def test():
 
   T = lambda f: transpose_unary(f, 0.)
 
-  '''
   @custom_transpose
   def f(_, z):
     return 2. * z
@@ -137,7 +136,6 @@ def test():
   print(T(T(T(T(f))))(1.))  # 3. ...
   print(jax.make_jaxpr(f)(1.))
   print(jax.make_jaxpr(T(f))(1.))
-  '''
 
   @custom_transpose
   def f(c, z):
@@ -145,13 +143,11 @@ def test():
 
   @f.def_transpose
   def ft(c, z):
-    return c * z
-    #return (c + 1.) * z
-    #return f(c + 1., z)
+    return f(c + 1., z)
 
-  g = functools.partial(f, 7.)
-  print(g(2.))              # 1.
-  print(T(g)(3.))           # 2.
+  g = functools.partial(f, 1.)
+  print(g(1.))              # 1.
+  print(T(g)(1.))           # 2.
   print(T(T(g))(1.))        # 3.
   print(T(T(T(g)))(1.))     # 4.
   print(T(T(T(T(g))))(1.))  # 5. ...
