@@ -88,8 +88,8 @@ class custom_transpose:
 
 @lu.transformation
 def _flatten_rule(res_tree, lin_tree, out_tree, *args):
-  assert len(args) == res_tree.num_leaves + out_tree.num_leaves
   res_flat, cts_out_flat = util.split_list(args, [res_tree.num_leaves])
+  assert len(cts_out_flat) == out_tree.num_leaves
   res = tree_unflatten(res_tree, res_flat)
   cts_out = tree_unflatten(out_tree, cts_out_flat)
   cts_in = yield (res, cts_out), {}
