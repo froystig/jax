@@ -94,7 +94,7 @@ def _flatten_rule(res_tree, lin_tree, out_tree, *args):
   cts_out = tree_unflatten(out_tree, cts_out_flat)
   cts_in = yield (res, cts_out), {}
   # TODO(danfm): Handle Nones in cts_in
-  cts_in_flat, cts_in_tree = tree_flatten(cts_in)
+  cts_in_flat, cts_in_tree = tree_flatten(cts_in, is_leaf=lambda x: x is None)
   assert cts_in_tree == lin_tree
   yield cts_in_flat
 
@@ -173,14 +173,14 @@ def test():
   np.testing.assert_allclose(jax.linear_transpose(f, y)(x)[0], A.T @ x)
 
   @custom_transpose
-  def f_custom(_, x):
-    return f(x)
+  def f_custom(A, x):
+    return A @ x
 
   @f_custom.def_transpose
-  def f_custom_transpose(_, ct):
+  def f_custom_transpose(A, ct):
     return -A.T @ ct
 
-  f_custom = functools.partial(f_custom, ())
+  f_custom = functools.partial(f_custom, A)
 
   np.testing.assert_allclose(f_custom(y), A @ y)
   np.testing.assert_allclose(jax.linear_transpose(f_custom, y)(x)[0], -A.T @ x)
