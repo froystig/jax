@@ -17,6 +17,7 @@ from __future__ import annotations
 import functools
 from typing import Any, Callable, Sequence
 
+import jax
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core
@@ -26,6 +27,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
@@ -74,43 +76,89 @@ class custom_transpose:
     call_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
     assert self._fun_transpose is not None, 'todo error'
+
+    # TODO(danfm): Do we want to flatten the rule here?
+    flat_rule = _flatten_rule(
+      lu.wrap_init(self._fun_transpose), res_tree, lin_tree, out_tree())
+
     out_flat = custom_transpose_p.bind(*consts, *args_flat,
                                        call=call_jaxpr,
-                                       rule=self._fun_transpose,
+                                       rule=flat_rule,
                                        num_consts=len(consts),
                                        res_tree=res_tree,
                                        lin_tree=lin_tree,
                                        out_tree=out_tree())
     return tree_unflatten(out_tree(), out_flat)
-  
+
+@lu.transformation
+def _flatten_rule(res_tree, lin_tree, out_tree, *args):
+  assert len(args) == res_tree.num_leaves + out_tree.num_leaves
+  res_flat, cts_out_flat = util.split_list(args, [res_tree.num_leaves])
+  res = tree_unflatten(res_tree, res_flat)
+  cts_out = tree_unflatten(out_tree, cts_out_flat)
+  cts_in = yield (res, cts_out), {}
+  # TODO(danfm): Handle Nones in cts_in
+  cts_in_flat, cts_in_tree = tree_flatten(cts_in)
+  assert cts_in_tree == lin_tree
+  yield cts_in_flat
+
 def custom_transpose_impl(*args, call, **_):
   return core.jaxpr_as_fun(call)(*args)
 
 def custom_transpose_abstract_eval(*in_avals, call: core.ClosedJaxpr, **_):
+  del in_avals
   return call.out_avals
 
 def custom_transpose_transpose(cts, *args, call, rule, num_consts,
                                res_tree, lin_tree, out_tree):
+  del call
   # call :: consts, res, lin -> out
   # rule :: res, out -> lin
   _, res_flat, lin_flat = util.split_list(
       args, [num_consts, res_tree.num_leaves])
-  res = tree_unflatten(res_tree, res_flat)
-  lin_by_rule = rule(res, tree_unflatten(out_tree, cts))
-  lin_by_rule_flat, lin_tree_by_rule = tree_flatten(lin_by_rule)
-  assert lin_tree == lin_tree_by_rule, 'todo error'
-  # todo check lin_by_rule_flat avals against lin_flat avals
+
+  # res = tree_unflatten(res_tree, res_flat)
+  # lin_by_rule = rule(res, tree_unflatten(out_tree, cts))
+  # lin_by_rule_flat, lin_tree_by_rule = tree_flatten(lin_by_rule)
+  # assert lin_tree == lin_tree_by_rule, 'todo error'
+
+  lin_by_rule_flat = rule.call_wrapped(*res_flat, *cts)
   return [None] * res_tree.num_leaves + lin_by_rule_flat
+
+def custom_transpose_batching(
+    spmd_axis_name, axis_size, axis_name, main_type, args, in_dims, *,
+    call, rule, num_consts, res_tree, lin_tree, out_tree):
+  args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
+          else x for x, d in zip(args, in_dims)]
+  in_batched = [d is not batching.not_mapped for d in in_dims]
+  batched_call, out_batched = batching.batch_jaxpr(
+      call, axis_size, in_batched, False, axis_name, spmd_axis_name, main_type)
+  batched_rule = batching.batch(rule, axis_name, axis_size, in_dims,
+                                out_batched, main_type, spmd_axis_name)
+  batched_outs = custom_transpose_p.bind(
+      *args,
+      call=batched_call,
+      rule=batched_rule,
+      num_consts=num_consts,
+      res_tree=res_tree,
+      lin_tree=lin_tree,
+      out_tree=out_tree,
+  )
+  return batched_outs, [0] * out_tree.num_leaves
 
 custom_transpose_p = core.Primitive('custom_transpose_call')
 custom_transpose_p.multiple_results = True
 custom_transpose_p.def_impl(custom_transpose_impl)
 custom_transpose_p.def_abstract_eval(custom_transpose_abstract_eval)
 ad.primitive_transposes[custom_transpose_p] = custom_transpose_transpose
-
+batching.spmd_axis_primitive_batchers[custom_transpose_p] = \
+    custom_transpose_batching
+batching.axis_primitive_batchers[custom_transpose_p] = \
+    functools.partial(custom_transpose_batching, None)
 
 def test():
   import jax
+  import jax.numpy as jnp
 
   def transpose_unary(f, x_example):
     def transposed(y):
@@ -129,6 +177,9 @@ def test():
     return 3. * z
 
   f = functools.partial(f, ())
+  print(jax.make_jaxpr(jax.vmap(f))(jnp.linspace(0, 1, 5)))
+  assert 0
+
   print(f(1.))              # 2.
   print(T(f)(1.))           # 3.
   print(T(T(f))(1.))        # 3.
@@ -156,9 +207,9 @@ def test():
   print(jax.make_jaxpr(T(T(g)))(1.))
 
 if __name__ == '__main__':
-  import ipdb, sys, traceback
-  def info(t, v, i):
-    traceback.print_exception(t, v, i)
-    ipdb.pm()
-  sys.excepthook = info
+  # import ipdb, sys, traceback
+  # def info(t, v, i):
+  #   traceback.print_exception(t, v, i)
+  #   ipdb.pm()
+  # sys.excepthook = info
   test()
