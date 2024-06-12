@@ -70,12 +70,12 @@ class custom_transpose:
         lu.wrap_init(self.fun), in_tree)
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
     debug = pe.debug_info(self.fun, in_tree, out_tree, False, "custom_transpose")
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-        flat_fun, in_avals, debug)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     call_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    out_tree = out_tree()
 
     flat_rule = _flatten_rule(
-      lu.wrap_init(self._fun_transpose), res_tree, lin_tree, out_tree())
+      lu.wrap_init(self._fun_transpose), res_tree, lin_tree, out_tree)
 
     out_flat = custom_transpose_p.bind(*consts, *args_flat,
                                        call=call_jaxpr,
@@ -83,8 +83,8 @@ class custom_transpose:
                                        num_consts=len(consts),
                                        res_tree=res_tree,
                                        lin_tree=lin_tree,
-                                       out_tree=out_tree())
-    return tree_unflatten(out_tree(), out_flat)
+                                       out_tree=out_tree)
+    return tree_unflatten(out_tree, out_flat)
 
 @lu.transformation
 def _flatten_rule(res_tree, lin_tree, out_tree, *args):
@@ -93,7 +93,6 @@ def _flatten_rule(res_tree, lin_tree, out_tree, *args):
   res = tree_unflatten(res_tree, res_flat)
   cts_out = tree_unflatten(out_tree, cts_out_flat)
   cts_in = yield (res, cts_out), {}
-  # TODO(danfm): Handle Nones in cts_in
   cts_in_flat, cts_in_tree = tree_flatten(cts_in, is_leaf=lambda x: x is None)
   assert cts_in_tree == lin_tree
   yield cts_in_flat
@@ -183,6 +182,21 @@ def test():
   np.testing.assert_allclose(f_custom_batch(y_batch), f_batch(y_batch))
   np.testing.assert_allclose(jax.linear_transpose(f_custom_batch, y_batch)(x_batch)[0],
                              -jax.linear_transpose(f_batch, y_batch)(x_batch)[0])
+
+  @jax.custom_jvp
+  def f2(x):
+    return A @ x
+
+  @f2.defjvp
+  def f2_jvp(primals, tangents):
+    return f2(*primals), f_custom(*tangents)
+
+  _, vjp_fun = jax.vjp(f, y)
+  _, vjp_fun2 = jax.vjp(f2, y)
+  np.testing.assert_allclose(vjp_fun2(x)[0], -vjp_fun(x)[0])
+
+  # print(jax.jvp(f2, (y,), (jnp.ones_like(y),)))
+  # print(jax.jvp(f2, (y,), (jnp.ones_like(y),)))
 
   # def transpose_unary(f, x_example):
   #   def transposed(y):
