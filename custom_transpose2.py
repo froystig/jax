@@ -26,6 +26,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.interpreters import ad
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
@@ -43,8 +44,6 @@ zip, unsafe_zip = util.safe_zip, zip
 class custom_transpose:
   fun: Callable
   _fun_transpose: Callable
-  call: core.ClosedJaxpr
-  rule: core.ClosedJaxpr | None = None
 
   def __init__(self, fun: Callable):
     functools.update_wrapper(self, fun)
@@ -58,6 +57,8 @@ class custom_transpose:
 
   @traceback_util.api_boundary
   def __call__(self, res_arg, lin_arg):
+    assert self._fun_transpose is not None, 'todo error'
+
     _, res_tree = tree_flatten(res_arg)
     _, lin_tree = tree_flatten(lin_arg)
     args_flat, in_tree = tree_flatten((res_arg, lin_arg))
@@ -69,91 +70,179 @@ class custom_transpose:
         lu.wrap_init(self.fun), in_tree)
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
     debug = pe.debug_info(self.fun, in_tree, out_tree, False, "custom_transpose")
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-        flat_fun, in_avals, debug)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
     call_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+    out_tree = out_tree()
 
-    assert self._fun_transpose is not None, 'todo error'
+    flat_rule = _flatten_rule(
+      lu.wrap_init(self._fun_transpose), res_tree, lin_tree, out_tree)
+
     out_flat = custom_transpose_p.bind(*consts, *args_flat,
                                        call=call_jaxpr,
-                                       rule=self._fun_transpose,
+                                       rule=flat_rule,
                                        num_consts=len(consts),
                                        res_tree=res_tree,
                                        lin_tree=lin_tree,
-                                       out_tree=out_tree())
-    return tree_unflatten(out_tree(), out_flat)
-  
+                                       out_tree=out_tree)
+    return tree_unflatten(out_tree, out_flat)
+
+@lu.transformation
+def _flatten_rule(res_tree, lin_tree, out_tree, *args):
+  res_flat, cts_out_flat = util.split_list(args, [res_tree.num_leaves])
+  assert len(cts_out_flat) == out_tree.num_leaves
+  res = tree_unflatten(res_tree, res_flat)
+  cts_out = tree_unflatten(out_tree, cts_out_flat)
+  cts_in = yield (res, cts_out), {}
+  cts_in_flat, cts_in_tree = tree_flatten(cts_in, is_leaf=lambda x: x is None)
+  assert cts_in_tree == lin_tree
+  yield cts_in_flat
+
 def custom_transpose_impl(*args, call, **_):
   return core.jaxpr_as_fun(call)(*args)
 
 def custom_transpose_abstract_eval(*in_avals, call: core.ClosedJaxpr, **_):
+  del in_avals
   return call.out_avals
 
 def custom_transpose_transpose(cts, *args, call, rule, num_consts,
                                res_tree, lin_tree, out_tree):
-  # call :: consts, res, lin -> out
-  # rule :: res, out -> lin
+  del call
   _, res_flat, lin_flat = util.split_list(
       args, [num_consts, res_tree.num_leaves])
-  res = tree_unflatten(res_tree, res_flat)
-  lin_by_rule = rule(res, tree_unflatten(out_tree, cts))
-  lin_by_rule_flat, lin_tree_by_rule = tree_flatten(lin_by_rule)
-  assert lin_tree == lin_tree_by_rule, 'todo error'
-  # todo check lin_by_rule_flat avals against lin_flat avals
-  return [None] * res_tree.num_leaves + lin_by_rule_flat
+  del lin_flat
+  lin_by_rule_flat = rule.call_wrapped(*res_flat, *cts)
+  return [None] * (num_consts + res_tree.num_leaves) + lin_by_rule_flat
+
+def custom_transpose_batching(
+    spmd_axis_name, axis_size, axis_name, main_type, args, in_dims, *,
+    call, rule, num_consts, res_tree, lin_tree, out_tree):
+  assert all(d is batching.not_mapped for d in in_dims[:num_consts])
+  args = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
+          else x for x, d in zip(args, in_dims)]
+  in_batched = [d is not batching.not_mapped for d in in_dims]
+  batched_call, out_batched = batching.batch_jaxpr(
+      call, axis_size, in_batched, False, axis_name, spmd_axis_name, main_type)
+  out_dim_dests = [0 if d else batching.not_mapped for d in out_batched]
+  batched_rule = batching.batch(rule, axis_name, axis_size, in_dims[num_consts:],
+                                out_dim_dests, main_type, spmd_axis_name)
+  batched_outs = custom_transpose_p.bind(
+      *args,
+      call=batched_call,
+      rule=batched_rule,
+      num_consts=num_consts,
+      res_tree=res_tree,
+      lin_tree=lin_tree,
+      out_tree=out_tree,
+  )
+  return batched_outs, [0] * out_tree.num_leaves
 
 custom_transpose_p = core.Primitive('custom_transpose_call')
 custom_transpose_p.multiple_results = True
 custom_transpose_p.def_impl(custom_transpose_impl)
 custom_transpose_p.def_abstract_eval(custom_transpose_abstract_eval)
 ad.primitive_transposes[custom_transpose_p] = custom_transpose_transpose
-
+batching.spmd_axis_primitive_batchers[custom_transpose_p] = \
+    custom_transpose_batching
+batching.axis_primitive_batchers[custom_transpose_p] = \
+    functools.partial(custom_transpose_batching, None)
 
 def test():
   import jax
+  import jax.numpy as jnp
+  import numpy as np
 
-  def transpose_unary(f, x_example):
-    def transposed(y):
-      x, = jax.linear_transpose(f, x_example)(y)
-      return x
-    return transposed
+  random = np.random.default_rng(0)
+  A = random.normal(size=(2, 3))
+  x = random.normal(size=2)
+  x_batch = random.normal(size=(5, 2))
+  y = random.normal(size=3)
+  y_batch = random.normal(size=(5, 3))
 
-  T = lambda f: transpose_unary(f, 0.)
+  def f(x):
+    return A @ x
 
-  @custom_transpose
-  def f(_, z):
-    return 2. * z
-
-  @f.def_transpose
-  def ft(_, z):
-    return 3. * z
-
-  f = functools.partial(f, ())
-  print(f(1.))              # 2.
-  print(T(f)(1.))           # 3.
-  print(T(T(f))(1.))        # 3.
-  print(T(T(T(f)))(1.))     # 3.
-  print(T(T(T(T(f))))(1.))  # 3. ...
-  print(jax.make_jaxpr(f)(1.))
-  print(jax.make_jaxpr(T(f))(1.))
+  np.testing.assert_allclose(f(y), A @ y)
+  np.testing.assert_allclose(jax.linear_transpose(f, y)(x)[0], A.T @ x)
 
   @custom_transpose
-  def f(c, z):
-    return c * z
+  def f_custom(A, x):
+    return A @ x
 
-  @f.def_transpose
-  def ft(c, z):
-    return f(c + 1., z)
+  @f_custom.def_transpose
+  def f_custom_transpose(A, ct):
+    return -A.T @ ct
 
-  g = functools.partial(f, 1.)
-  print(g(1.))              # 1.
-  print(T(g)(1.))           # 2.
-  print(T(T(g))(1.))        # 3.
-  print(T(T(T(g)))(1.))     # 4.
-  print(T(T(T(T(g))))(1.))  # 5. ...
-  print(jax.make_jaxpr(g)(1.))
-  print(jax.make_jaxpr(T(g))(1.))
-  print(jax.make_jaxpr(T(T(g)))(1.))
+  f_custom = functools.partial(f_custom, A)
+
+  np.testing.assert_allclose(f_custom(y), A @ y)
+  np.testing.assert_allclose(jax.linear_transpose(f_custom, y)(x)[0], -A.T @ x)
+
+  f_batch = jax.vmap(f)
+  f_custom_batch = jax.vmap(f_custom)
+  np.testing.assert_allclose(f_custom_batch(y_batch), f_batch(y_batch))
+  np.testing.assert_allclose(jax.linear_transpose(f_custom_batch, y_batch)(x_batch)[0],
+                             -jax.linear_transpose(f_batch, y_batch)(x_batch)[0])
+
+  @jax.custom_jvp
+  def f2(x):
+    return A @ x
+
+  @f2.defjvp
+  def f2_jvp(primals, tangents):
+    return f2(*primals), f_custom(*tangents)
+
+  _, vjp_fun = jax.vjp(f, y)
+  _, vjp_fun2 = jax.vjp(f2, y)
+  np.testing.assert_allclose(vjp_fun2(x)[0], -vjp_fun(x)[0])
+
+  # print(jax.jvp(f2, (y,), (jnp.ones_like(y),)))
+  # print(jax.jvp(f2, (y,), (jnp.ones_like(y),)))
+
+  # def transpose_unary(f, x_example):
+  #   def transposed(y):
+  #     x, = jax.linear_transpose(f, x_example)(y)
+  #     return x
+  #   return transposed
+
+  # T = lambda f: transpose_unary(f, 0.)
+
+  # @custom_transpose
+  # def f(_, z):
+  #   return 2. * z
+
+  # @f.def_transpose
+  # def ft(_, z):
+  #   return 3. * z
+
+  # f = functools.partial(f, ())
+  # print(jax.make_jaxpr(jax.vmap(f))(jnp.linspace(0, 1, 5)))
+  # assert 0
+
+  # print(f(1.))              # 2.
+  # print(T(f)(1.))           # 3.
+  # print(T(T(f))(1.))        # 3.
+  # print(T(T(T(f)))(1.))     # 3.
+  # print(T(T(T(T(f))))(1.))  # 3. ...
+  # print(jax.make_jaxpr(f)(1.))
+  # print(jax.make_jaxpr(T(f))(1.))
+
+  # @custom_transpose
+  # def f(c, z):
+  #   return c * z
+
+  # @f.def_transpose
+  # def ft(c, z):
+  #   return f(c + 1., z)
+
+  # g = functools.partial(f, 1.)
+  # print(g(1.))              # 1.
+  # print(T(g)(1.))           # 2.
+  # print(T(T(g))(1.))        # 3.
+  # print(T(T(T(g)))(1.))     # 4.
+  # print(T(T(T(T(g))))(1.))  # 5. ...
+  # print(jax.make_jaxpr(g)(1.))
+  # print(jax.make_jaxpr(T(g))(1.))
+  # print(jax.make_jaxpr(T(T(g)))(1.))
 
 if __name__ == '__main__':
   import ipdb, sys, traceback
