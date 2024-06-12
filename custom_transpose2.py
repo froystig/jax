@@ -108,16 +108,9 @@ def custom_transpose_abstract_eval(*in_avals, call: core.ClosedJaxpr, **_):
 def custom_transpose_transpose(cts, *args, call, rule, num_consts,
                                res_tree, lin_tree, out_tree):
   del call
-  # call :: consts, res, lin -> out
-  # rule :: res, out -> lin
   _, res_flat, lin_flat = util.split_list(
       args, [num_consts, res_tree.num_leaves])
-
-  # res = tree_unflatten(res_tree, res_flat)
-  # lin_by_rule = rule(res, tree_unflatten(out_tree, cts))
-  # lin_by_rule_flat, lin_tree_by_rule = tree_flatten(lin_by_rule)
-  # assert lin_tree == lin_tree_by_rule, 'todo error'
-
+  del lin_flat
   lin_by_rule_flat = rule.call_wrapped(*res_flat, *cts)
   return [None] * (num_consts + res_tree.num_leaves) + lin_by_rule_flat
 
