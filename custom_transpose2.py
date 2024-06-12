@@ -44,8 +44,6 @@ zip, unsafe_zip = util.safe_zip, zip
 class custom_transpose:
   fun: Callable
   _fun_transpose: Callable
-  call: core.ClosedJaxpr
-  rule: core.ClosedJaxpr | None = None
 
   def __init__(self, fun: Callable):
     functools.update_wrapper(self, fun)
@@ -59,6 +57,8 @@ class custom_transpose:
 
   @traceback_util.api_boundary
   def __call__(self, res_arg, lin_arg):
+    assert self._fun_transpose is not None, 'todo error'
+
     _, res_tree = tree_flatten(res_arg)
     _, lin_tree = tree_flatten(lin_arg)
     args_flat, in_tree = tree_flatten((res_arg, lin_arg))
@@ -74,7 +74,6 @@ class custom_transpose:
         flat_fun, in_avals, debug)
     call_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
-    assert self._fun_transpose is not None, 'todo error'
     flat_rule = _flatten_rule(
       lu.wrap_init(self._fun_transpose), res_tree, lin_tree, out_tree())
 
