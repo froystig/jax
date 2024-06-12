@@ -17,7 +17,6 @@ from __future__ import annotations
 import functools
 from typing import Any, Callable, Sequence
 
-import jax
 from jax._src import ad_util
 from jax._src import api_util
 from jax._src import core
@@ -76,8 +75,6 @@ class custom_transpose:
     call_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
     assert self._fun_transpose is not None, 'todo error'
-
-    # TODO(danfm): Do we want to flatten the rule here?
     flat_rule = _flatten_rule(
       lu.wrap_init(self._fun_transpose), res_tree, lin_tree, out_tree())
 
