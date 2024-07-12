@@ -43,27 +43,29 @@ def pallas_hash(key, msg):
       out_shape=out)(key, msg)
   return result
 
-
 def seed(seed: jax.Array) -> jax.Array:
   return jnp.array([seed], dtype=jnp.uint32)
 
 def iota_hash(key: jax.Array, shape) -> jax.Array:
   _, counts = jax._src.prng.iota_2x32_shape(shape)
-  bitss = jax.vmap(pallas_hash, in_axes=(None, 0))(key, counts)
+  vmap_hash = pallas_hash
+  for _ in range(len(shape)):
+    vmap_hash = jax.vmap(vmap_hash, in_axes=(None, 0))
+  bitss = vmap_hash(key, counts)
   return bitss[..., 0, 0]  # TODO: wasteful
 
 def split(key: jax.Array, shape) -> jax.Array:
-  return iota_hash(key, shape)
+  return iota_hash(key[0], shape).reshape((-1, 1))
 
 def fold_in(key: jax.Array, data: jax.Array) -> jax.Array:
-  bits = pallas_hash(key, data)
-  return bits[0, 0]
+  bits = pallas_hash(key[0], data)
+  return bits[0, 0, None]
 
 def random_bits(key: jax.Array, bit_width: int, shape: Sequence[int]
                 ) -> jax.Array:
   if bit_width != 32:
     raise NotImplementedError(f'bit_width {bit_width}')
-  return iota_hash(key, shape)
+  return iota_hash(key[0], shape)
 
 palrng = jex.random.define_prng_impl(key_shape=(1,), seed=seed, split=split,
                                      random_bits=random_bits, fold_in=fold_in,
