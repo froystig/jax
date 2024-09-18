@@ -47,6 +47,7 @@ from jax._src import source_info_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import physical
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.sharding import Sharding as JSharding
@@ -1323,6 +1324,7 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
+  jaxpr = physical.physicalize(jaxpr)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
@@ -2158,13 +2160,7 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   # op is broadcast.
   # Lower a possibly-dynamic broadcast_in_dim
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):  # type: ignore
-    elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
-        aval_out.dtype).shape                                 # type: ignore
-    trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
-    broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
-    physical_aval_out = core.physical_aval(aval_out)
-    return broadcast_in_dim(
-        ctx, op, physical_aval_out, broadcast_dimensions=broadcast_dimensions)
+    assert False
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore

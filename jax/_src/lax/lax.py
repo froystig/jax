@@ -53,6 +53,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import physical
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.interpreters.batching import RaggedAxis
@@ -3412,6 +3413,29 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
   return core.DShapedArray(_merge_dyn_shape(shape, dyn_shape), x.dtype, x.weak_type)
 
+
+def broadcast_in_dim_physicalize_rule(
+    in_avals,
+    out_avals,
+    *args,
+    broadcast_dimensions,
+    shape,
+):
+  del shape
+  aval_out, = out_avals
+  arg, = args
+  aval_in, = in_avals
+  assert dtypes.issubdtype(aval_out.dtype, dtypes.extended), aval_out.dtype
+  assert aval_in.dtype == aval_out.dtype, aval_in.dtype
+  elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
+      aval_out.dtype).shape                                 # type: ignore
+  trailing_dims = [aval_out.ndim + i for i in range(len(elt_shape))]  # type: ignore
+  broadcast_dimensions = [*broadcast_dimensions, *trailing_dims]
+  physical_aval_out = core.physical_aval(aval_out)
+  return broadcast_in_dim(arg,
+                          shape=physical_aval_out.shape,
+                          broadcast_dimensions=broadcast_dimensions)
+
 broadcast_in_dim_p = standard_primitive(
     _broadcast_in_dim_shape_rule, _input_dtype, 'broadcast_in_dim')
 broadcast_in_dim_p.def_abstract_eval(_broadcast_in_dim_abstract_eval)
@@ -3424,6 +3448,7 @@ pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
+physical.physicalize_rules[broadcast_in_dim_p] = broadcast_in_dim_physicalize_rule
 
 
 def _clamp_shape_rule(min, operand, max):
