@@ -2198,7 +2198,6 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    # aval_out = core.physical_aval(aval_out)
     assert False
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
