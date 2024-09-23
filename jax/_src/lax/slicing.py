@@ -35,6 +35,7 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
+from jax._src.interpreters import physical
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lax.utils import (
@@ -1175,7 +1176,21 @@ def _slice_lower(ctx, x, *, start_indices, limit_indices, strides):
   return [mlir.slice_op(ctx, x, aval_out,
                         start_indices=start_indices, limit_indices=limit_indices, strides=strides)]
 
+def _slice_physicalize_rule(ctx, x, *, start_indices, limit_indices, strides):
+  aval_out, = ctx.avals_out
+  elt_shape = aval_out.dtype._rules.physical_element_aval(
+      aval_out.dtype).shape
+  trailing_zeros = [0] * len(elt_shape)
+  trailing_ones  = [1] * len(elt_shape)
+  strides = strides or [1] * len(start_indices)
+  start_indices = (*start_indices, *trailing_zeros)
+  limit_indices = (*limit_indices, *elt_shape)
+  strides = (*strides, *trailing_ones)
+  return slice_p.bind(x, start_indices=start_indices,
+                  limit_indices=limit_indices, strides=strides)
+
 mlir.register_lowering(slice_p, _slice_lower)
+physical.physicalize_rules[slice_p] = _slice_physicalize_rule
 
 
 def _dynamic_slice_shape_rule(
@@ -1300,6 +1315,18 @@ def _dynamic_slice_padding_rule(in_avals, out_avals, x, *starts_and_dyn,
   start_idx = [d.val if type(d) is core.DArray else d for d in start_indices]
   return [dynamic_slice(x, start_idx, slice_sizes_)]
 
+def _dynamic_slice_physicalize_rule(ctx, x, *starts_and_dyn_sizes, slice_sizes):
+  aval_out, = ctx.avals_out
+  x_aval, _, _ = util.split_list(ctx.avals_in, [1, x.ndim])
+  x_aval = x_aval[0]
+  elt_shape = aval_out.dtype._rules.physical_element_aval(
+      aval_out.dtype).shape
+  start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x_aval.ndim])
+  trailing_zeros = [0] * len(elt_shape)
+  start_indices = (*start_indices, *trailing_zeros, *dyn)
+  slice_sizes = (*slice_sizes, *elt_shape)
+  return dynamic_slice(x, start_indices, slice_sizes)
+
 dynamic_slice_p = standard_primitive(
     _dynamic_slice_shape_rule, _dynamic_slice_dtype_rule, 'dynamic_slice',
     weak_type_rule=_argnum_weak_type(0))
@@ -1309,6 +1336,7 @@ batching.primitive_batchers[dynamic_slice_p] = _dynamic_slice_batching_rule
 pe.custom_staging_rules[dynamic_slice_p] = _dynamic_slice_staging_rule
 core.custom_typechecks[dynamic_slice_p] = _dynamic_slice_typecheck_rule
 pe.padding_rules[dynamic_slice_p] = _dynamic_slice_padding_rule
+physical.physicalize_rules[dynamic_slice_p] = _dynamic_slice_physicalize_rule
 
 def _dynamic_slice_lower(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   x_aval, *_ = ctx.avals_in
@@ -1408,6 +1436,14 @@ def _dynamic_update_slice_batching_rule(batched_args, batch_dims):
     out_axes=0)(operand, index, update), 0
 
 
+def _dynamic_update_slice_physicalize_rule(ctx, x, update, *start_indices):
+  aval_out, = ctx.avals_out
+  elt_shape = aval_out.dtype._rules.physical_element_aval(
+      aval_out.dtype).shape
+  zeros = [0] * len(elt_shape)
+  start_indices = (*start_indices, *zeros)
+  return dynamic_update_slice(x, update, start_indices=start_indices)
+
 dynamic_update_slice_p = standard_primitive(
     _dynamic_update_slice_shape_rule, _dynamic_update_slice_dtype_rule,
     'dynamic_update_slice')
@@ -1416,6 +1452,7 @@ ad.primitive_transposes[dynamic_update_slice_p] = \
     _dynamic_update_slice_transpose_rule
 batching.primitive_batchers[dynamic_update_slice_p] = \
     _dynamic_update_slice_batching_rule
+physical.physicalize_rules[dynamic_update_slice_p] = _dynamic_update_slice_physicalize_rule
 
 def _dynamic_update_slice_lower(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out

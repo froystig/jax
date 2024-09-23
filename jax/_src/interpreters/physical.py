@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections.abc import Callable, Iterable, Iterator, Sequence
+import dataclasses
 import functools
 from functools import partial
 from typing import Any
@@ -29,8 +30,8 @@ zip, unsafe_zip = util.safe_zip, zip
 physicalize_rules = {}
 
 
-def default_physicalize_rule(primitive, in_avals, out_avals, *args, **params):
-  del in_avals, out_avals
+def default_physicalize_rule(primitive, ctx, *args, **params):
+  del ctx
   return primitive.bind(*args, **params)
 
 
@@ -42,6 +43,12 @@ def physicalize_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       wrapped_fn, physical_in_avals)
   return core.ClosedJaxpr(new_jaxpr, consts)
+
+
+@dataclasses.dataclass(frozen=True)
+class PhysicalizeContext:
+  avals_in: Sequence[Any]
+  avals_out: Sequence[Any]
 
 
 def physicalize_jaxpr_interp(jaxpr: core.Jaxpr,
@@ -77,9 +84,12 @@ def physicalize_jaxpr_interp(jaxpr: core.Jaxpr,
     ):
       has_extended = any(dtypes.issubdtype(invar.aval.dtype, dtypes.extended) for invar in eqn.invars)
       if has_extended:
+        ctx = PhysicalizeContext(
+          avals_in = (x.aval for x in eqn.invars),
+          avals_out = (x.aval for x in eqn.outvars)
+        )
         physical_outvals = physicalize_rule(
-            [x.aval for x in eqn.invars], [x.aval for x in eqn.outvars],
-            *physical_invals, **eqn.params
+            ctx, *physical_invals, **eqn.params
         )
       else:
         physical_outvals = eqn.primitive.bind(*physical_invals, **eqn.params)

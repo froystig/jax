@@ -23,6 +23,7 @@ from jax._src.core import Primitive, valid_jaxtype, raise_to_shaped, get_aval
 from jax._src.tree_util import register_pytree_node
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import safe_map
+from jax._src.interpreters import physical
 
 traceback_util.register_exclusion(__file__)
 
@@ -33,8 +34,13 @@ map = safe_map
 def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
   return add_jaxvals_p.bind(x, y)
 
+def _add_jaxvals_physicalize_rule(ctx, x, y):
+  a, _ = ctx.avals_in
+  return a.dtype._rules.add(a.dtype, x, y)
+
 add_jaxvals_p = Primitive('add_any')
 add_any_p = add_jaxvals_p
+physical.physicalize_rules[add_jaxvals_p] = _add_jaxvals_physicalize_rule
 
 @add_jaxvals_p.def_impl
 def add_impl(x, y):

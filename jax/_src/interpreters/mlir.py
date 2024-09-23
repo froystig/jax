@@ -1324,7 +1324,7 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
-  jaxpr = physical.physicalize(jaxpr)
+  jaxpr = physical.physicalize_jaxpr(jaxpr)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
@@ -2197,7 +2197,9 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   return out
 
 def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Value:
-  aval_out = core.physical_aval(aval_out)
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    # aval_out = core.physical_aval(aval_out)
+    assert False
   if not core.is_constant_shape(aval_out.shape):  # type: ignore
     shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
     return hlo.dynamic_reshape(
@@ -2209,16 +2211,7 @@ def reshape(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue) -> ir.Va
 def slice_op(ctx: LoweringRuleContext, x, aval_out, *,
              start_indices, limit_indices, strides) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
-    trailing_zeros = [0] * len(elt_shape)
-    trailing_ones  = [1] * len(elt_shape)
-    start_indices = (*start_indices, *trailing_zeros)
-    limit_indices = (*limit_indices, *elt_shape)
-    strides = (*strides, *trailing_ones)
-    physical_aval_out = core.physical_aval(aval_out)
-    return slice_op(ctx, x, physical_aval_out, start_indices=start_indices,
-                    limit_indices=limit_indices, strides=strides)
+    assert False
   else:
     if any(not core.is_constant_shape(s) for s in (start_indices, limit_indices, strides)):
       start_indices = eval_dynamic_shape_as_tensor(ctx, start_indices)
@@ -2237,15 +2230,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
                   start_indices) -> ir.Value:
   x_aval = ctx.avals_in[0]
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
-    index_avals = ctx.avals_in[1:]
-    dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
-    trailing_zeros = [ir_constant(np.array(0, dtype))] * len(elt_shape)
-    start_indices = (*start_indices, *trailing_zeros)
-    aval_out = core.physical_aval(aval_out)
-    x_aval = core.physical_aval(x_aval)
+    assert False
 
   slice_sizes = aval_out.shape
   if not core.is_constant_shape(slice_sizes):
@@ -2271,16 +2256,7 @@ def dynamic_slice(ctx: LoweringRuleContext, aval_out, x, *,
 def dynamic_update_slice(ctx: LoweringRuleContext, aval_out, x, update, *,
                          start_indices) -> ir.Value:
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    elt_shape = aval_out.dtype._rules.physical_element_aval(
-        aval_out.dtype).shape
-    index_avals = ctx.avals_in[2:]
-    dtype = dtypes.canonicalize_dtype(
-        index_avals[0].dtype if index_avals else 'int64')  # type: ignore
-    zeros = [ir_constant(np.array(0, dtype=dtype))] * len(elt_shape)
-    start_indices = (*start_indices, *zeros)
-    physical_aval_out = core.physical_aval(aval_out)
-    return dynamic_update_slice(ctx, physical_aval_out, x, update,
-                                start_indices=start_indices)
+    assert False
   else:
     # TODO(necula): handle dynamic shapes
     return hlo.dynamic_update_slice(x, update, start_indices)
@@ -2321,7 +2297,7 @@ def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> i
 def add_jaxvals_lowering(ctx, x, y):
   if (isinstance(a := ctx.avals_in[0], core.ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
-    return lower_fun(lambda x, y: [a.dtype._rules.add(a.dtype, x, y)])(ctx, x, y)
+    assert False
   return [hlo.add(x, y)]
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
@@ -2366,8 +2342,9 @@ def convert_hlo(ctx: LoweringRuleContext, x, aval_in, aval_out):
 
   In particular, treat casts to boolean as x != 0, rather than truncating
   integer values (b/209440332)."""
-  if (not dtypes.issubdtype(aval_out.dtype, dtypes.extended) and
-      aval_out.dtype == np.dtype(np.bool_)):
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    assert False
+  if (aval_out.dtype == np.dtype(np.bool_)):
     if dtypes.issubdtype(aval_in.dtype, np.inexact):
       compare_type = "FLOAT"
     elif dtypes.issubdtype(aval_in.dtype, np.signedinteger):

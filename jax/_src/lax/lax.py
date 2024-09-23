@@ -3415,16 +3415,15 @@ def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
 
 
 def broadcast_in_dim_physicalize_rule(
-    in_avals,
-    out_avals,
+    ctx,
     *args,
     broadcast_dimensions,
     shape,
 ):
   del shape
-  aval_out, = out_avals
+  aval_out, = ctx.avals_out
   arg, = args
-  aval_in, = in_avals
+  aval_in, = ctx.avals_in
   assert dtypes.issubdtype(aval_out.dtype, dtypes.extended), aval_out.dtype
   assert aval_in.dtype == aval_out.dtype, aval_in.dtype
   elt_shape = aval_out.dtype._rules.physical_element_aval(  # type: ignore
@@ -3808,6 +3807,16 @@ def _reshape_staging_rule(
   av = core.DShapedArray(_merge_dyn_shape(new_sizes, dyn), x.dtype, x.weak_type)
   return _dyn_shape_staging_rule(trace, reshape_p, av, x, *dyn, **params)
 
+def _reshape_physicalize_rule(ctx, x, *dyn_shape, new_sizes, dimensions):
+  aval_out, = ctx.avals_out
+  elt_shape = aval_out.dtype._rules.physical_element_aval(
+      aval_out.dtype).shape
+  out_shape = _merge_dyn_shape(new_sizes, dyn_shape)
+  new_sizes = (*out_shape, *elt_shape)
+  if dimensions is not None:
+    dimensions = (*dimensions, len(dimensions))
+  return reshape(x, new_sizes, dimensions)
+
 reshape_p = standard_primitive(_reshape_shape_rule, _reshape_dtype_rule,
                                'reshape')
 ad.deflinear2(reshape_p, _reshape_transpose_rule)
@@ -3815,6 +3824,7 @@ batching.primitive_batchers[reshape_p] = _reshape_batch_rule
 mlir.register_lowering(reshape_p, _reshape_lower)
 core.custom_typechecks[reshape_p] = _reshape_typecheck_rule
 pe.custom_staging_rules[reshape_p] = _reshape_staging_rule
+physical.physicalize_rules[reshape_p] = _reshape_physicalize_rule
 
 
 def _rev_shape_rule(operand, *, dimensions):
