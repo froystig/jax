@@ -1840,11 +1840,7 @@ def _gather_lower(ctx, operand, indices, *,
                   indices_are_sorted, mode, fill_value):
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    return [_gather_lower_opaque(
-        ctx, operand, indices, dimension_numbers=dimension_numbers,
-        slice_sizes=slice_sizes, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode,
-        fill_value=fill_value)]
+    assert False
 
   if mode == GatherScatterMode.FILL_OR_DROP:
     gather_fill_fn = mlir.lower_fun(_gather_fill, multiple_results=False)
@@ -1888,6 +1884,26 @@ def _gather_lower(ctx, operand, indices, *,
         indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))]
 
 mlir.register_lowering(gather_p, _gather_lower)
+
+def _gather_physicalize_rule(ctx, operand, indices, *,
+                     dimension_numbers, slice_sizes, unique_indices,
+                     indices_are_sorted, mode, fill_value ):
+  aval_x, aval_indices = ctx.avals_in
+  aval_y, = ctx.avals_out
+  elt_shape = aval_x.dtype._rules.physical_element_aval(aval_x.dtype).shape
+  trailing_offset_dims = [aval_y.ndim + i for i in range(len(elt_shape))]
+  dimension_numbers = dimension_numbers._replace(
+      offset_dims=(*dimension_numbers.offset_dims, *trailing_offset_dims))
+  slice_sizes = (*slice_sizes, *elt_shape)
+  return gather(operand,
+                indices, 
+                dimension_numbers=dimension_numbers,
+                slice_sizes=slice_sizes,
+                unique_indices=unique_indices,
+                indices_are_sorted=indices_are_sorted,
+                mode=mode,
+                fill_value=fill_value)
+physical.physicalize_rules[gather_p] = _gather_physicalize_rule
 
 def _scatter_dtype_rule(operand, indices, updates, **kwargs):
   if not dtypes.issubdtype(indices.dtype, np.integer):
@@ -2501,11 +2517,7 @@ def _scatter_lower(ctx, operand, indices, updates, *,
 
   aval_out, = ctx.avals_out
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    return [_scatter_lower_opaque(
-        ctx, operand, indices, updates,
-        update_jaxpr=update_jaxpr, update_consts=update_consts,
-        dimension_numbers=dimension_numbers, unique_indices=unique_indices,
-        indices_are_sorted=indices_are_sorted, mode=mode)]
+    assert False
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
@@ -2545,11 +2557,32 @@ def _scatter_lower(ctx, operand, indices, updates, *,
     hlo.return_(mlir.flatten_ir_values(out_nodes))
   return op.results
 
+def _scatter_physicalize_rule(ctx, operand, indices, updates, *,
+                   update_jaxpr, update_consts, dimension_numbers,
+                   indices_are_sorted, unique_indices, mode):
+  aval_x, aval_indices, aval_updates = ctx.avals_in
+  aval_y, = ctx.avals_out
+  elt_shape = aval_x.dtype._rules.physical_element_aval(aval_x.dtype).shape
+  trailing_window_dims = [aval_updates.ndim + i for i in range(len(elt_shape))]
+  dimension_numbers = dimension_numbers._replace(
+      update_window_dims=(*dimension_numbers.update_window_dims,
+                          *trailing_window_dims))
+  return scatter(operand, indices, updates,
+                 dimension_numbers=dimension_numbers,
+                 indices_are_sorted=indices_are_sorted,
+                 unique_indices=unique_indices,
+                 mode=mode)
+
 mlir.register_lowering(scatter_p, _scatter_lower)
 mlir.register_lowering(scatter_add_p, _scatter_lower)
 mlir.register_lowering(scatter_mul_p, _scatter_lower)
 mlir.register_lowering(scatter_min_p, _scatter_lower)
 mlir.register_lowering(scatter_max_p, _scatter_lower)
+physical.physicalize_rules[scatter_p] = _scatter_physicalize_rule
+physical.physicalize_rules[scatter_add_p] = _scatter_physicalize_rule
+physical.physicalize_rules[scatter_mul_p] = _scatter_physicalize_rule
+physical.physicalize_rules[scatter_min_p] = _scatter_physicalize_rule
+physical.physicalize_rules[scatter_max_p] = _scatter_physicalize_rule
 
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype

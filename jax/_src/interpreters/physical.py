@@ -82,11 +82,12 @@ def physicalize_jaxpr_interp(jaxpr: core.Jaxpr,
     with source_info_util.user_context(
         eqn.source_info.traceback, name_stack=name_stack
     ):
-      has_extended = any(dtypes.issubdtype(invar.aval.dtype, dtypes.extended) for invar in eqn.invars)
-      if has_extended:
+      has_extended_input = any(dtypes.issubdtype(var.aval.dtype, dtypes.extended) for var in eqn.invars)
+      has_extended_output = any(dtypes.issubdtype(var.aval.dtype, dtypes.extended) for var in eqn.outvars)
+      if has_extended_input or has_extended_output:
         ctx = PhysicalizeContext(
-          avals_in = (x.aval for x in eqn.invars),
-          avals_out = (x.aval for x in eqn.outvars)
+          avals_in = tuple(x.aval for x in eqn.invars),
+          avals_out = tuple(x.aval for x in eqn.outvars)
         )
         physical_outvals = physicalize_rule(
             ctx, *physical_invals, **eqn.params

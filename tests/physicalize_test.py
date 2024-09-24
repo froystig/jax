@@ -18,6 +18,7 @@ import unittest
 import operator as op
 from absl.testing import absltest
 
+import numpy as np
 import jax
 from jax import numpy as jnp
 from jax import random
@@ -29,6 +30,7 @@ import jax._src.interpreters.physical as physical
 import jax._src.test_util as jtu
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
+from jax._src.lax import lax as lax_internal
 from jax._src import tree_util as tree_util_internal
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, physical_sharding, logical_sharding)
@@ -51,8 +53,9 @@ class TestTyRules:
   
   @staticmethod
   def full(shape, fill_value, dtype):
-    physical_shape = (*shape, *dtype.element_shape)
-    return lax.full(physical_shape, fill_value, fill_value.dtype)
+    raise ValueError('%s, %s' % (fill_value, dtype))
+    #physical_shape = (*shape, *dtype.element_shape)
+    #return lax.full(physical_shape, fill_value, fill_value.dtype)
   
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
@@ -71,12 +74,14 @@ class TestTyRules:
   
   @staticmethod
   def convert_from(my_dtype, other_dtype) -> bool:
-    if other_dtype == jnp.uint32:
+    if other_dtype == jnp.uint32 or other_dtype == jnp.float32:
       return True
     return False
 
   @staticmethod
   def convert_to(other_dtype, my_dtype) -> bool:
+    if other_dtype == jnp.uint32 or other_dtype == jnp.float32:
+      return True
     return False
 
 
@@ -85,6 +90,9 @@ class TestTy(dtypes.ExtendedDType):
   type = test_extended_type
   element_shape = (7, 3)
   name = 'TestTy'
+
+  def __str__(self):
+    return self.name
 
 TEST_TY = TestTy()
 
@@ -178,11 +186,16 @@ pxla.shard_arg_handlers[TestExtendedArray] = test_array_shard_arg_handler
 
 
 
-def find_primitive(jaxpr: core.ClosedJaxpr, 
+def find_primitive(jaxpr: core.Jaxpr, 
                   primitive: core.Primitive):
   for eqn in jaxpr.eqns:
     if eqn.primitive == primitive:
       return eqn
+    if 'jaxpr' in eqn.params:
+      try:
+        return find_primitive(eqn.params['jaxpr'], primitive)
+      except ValueError:
+        continue
   raise ValueError(f"Primitive not found: {primitive.name}\n\tin JAXPR: {jaxpr}")
 
 
@@ -310,19 +323,151 @@ class PhysicalizeTest(unittest.TestCase):
                       expected_out_shapes=[(12, 2, 2)],
                       expected_out_dtypes=[jnp.uint32],
                       )
+    # TODO(justinfu): Test dynamic.
 
   def test_convert_element_type(self):
+    def fun(x, y):
+      x = lax.convert_element_type(x, core.bint(5))
+      x = lax.convert_element_type(x, jnp.int32)
+      y = lax.convert_element_type(y, core.bint(8))
+      y = lax.convert_element_type(y, jnp.int32)
+      return x + y
+    result = jax.jit(fun)(2, 3)
+    self.assertEqual(result, 5)
+    traced = jax.jit(fun).trace(2, 3)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    self.assert_jaxpr(phys_jaxpr, 
+                    lax.convert_element_type_p,
+                    expected_in_shapes=[()],
+                    expected_in_dtypes=[jnp.int32],
+                    expected_out_shapes=[()],
+                    expected_out_dtypes=[jnp.int32],
+                    )
+
+  def test_empty(self):
+    def fun():
+      return lax_internal.empty(random.key(0).dtype)
+    result = jax.jit(fun)()
+    self.assertEqual(result.shape, ())
+    np.testing.assert_array_equal(jax.random.key_data(result),
+                                  jnp.zeros((2,)))
+
+  def test_gather(self):
+    def fun(k, starts):
+      return lax.gather(k, starts,
+                        lax.GatherDimensionNumbers((0, 1), (), (0, 1)),
+                        (2, 3))
+    k = random.split(random.key(0), (4, 4))
+    starts = jnp.array([0, 1])
+    result = jax.jit(fun)(k, starts)
+    np.testing.assert_array_equal(jax.random.key_data(result),
+                                  jax.random.key_data(k[0:2, 1:4]))
+    traced = jax.jit(fun).trace(k, starts)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    self.assert_jaxpr(phys_jaxpr, 
+                    lax.gather_p,
+                    expected_in_shapes=[(4, 4, 2)],
+                    expected_in_dtypes=[jnp.uint32],
+                    expected_out_shapes=[(2, 3, 2)],
+                    expected_out_dtypes=[jnp.uint32],
+                    )
+
+  def test_scatter(self):
+    def fun(k, indices, updates):
+      return lax.scatter(k,
+                         indices,
+                         updates,
+                        lax.ScatterDimensionNumbers((0, 1), (), (0, 1)))
+    k = random.split(random.key(0), (4, 4))
+    updates = random.split(random.key(1), (2, 3))
+    indices = jnp.array([0, 1])
+    result = jax.jit(fun)(k, indices, updates)
+    np.testing.assert_array_equal(jax.random.key_data(result),
+                                  jax.random.key_data(k).at[0:2, 1:4].set(
+                                    jax.random.key_data(updates)))
+    traced = jax.jit(fun).trace(k, indices, updates)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    self.assert_jaxpr(phys_jaxpr, 
+                    lax.scatter_p,
+                    expected_in_shapes=[(4, 4, 2), (2,), (2, 3, 2)],
+                    expected_in_dtypes=[jnp.uint32, jnp.int32, jnp.uint32],
+                    expected_out_shapes=[(4, 4, 2)],
+                    expected_out_dtypes=[jnp.uint32],
+                    )
+
+  def test_compare(self):
+    def fun(x, y):
+      return x == y
+    x = random.split(random.key(0), (2, 3))
+    y = random.split(random.key(1), (2, 3))
+    result = jax.jit(fun)(x, y)
+    np.testing.assert_array_equal(result,
+                                  jnp.zeros((2, 3)))
+    traced = jax.jit(fun).trace(x, y)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    self.assert_jaxpr(phys_jaxpr, 
+                    lax.eq_p,
+                    expected_in_shapes=[(2, 3, 2), (2, 3, 2)],
+                    expected_in_dtypes=[jnp.uint32, jnp.uint32],
+                    expected_out_shapes=[(2, 3, 2)],
+                    expected_out_dtypes=[jnp.bool_],
+                    )
+
+  def test_select(self):
+    def fun(which, x, y):
+      return lax.select(which, x, y)
+
+    which = jnp.array([True, False, True])
+    x = random.split(random.key(0), (3,))
+    y = random.split(random.key(1), (3,))
+    result = jax.jit(fun)(which, x, y)
+    np.testing.assert_array_equal(result,
+                                  jnp.stack([x[0], y[1], x[2]]))
+    traced = jax.jit(fun).trace(which, x, y)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    self.assert_jaxpr(phys_jaxpr, 
+                    lax.select_n_p,
+                    expected_in_shapes=[(3, 2), (3, 2), (3, 2)],
+                    expected_in_dtypes=[jnp.bool_, jnp.uint32, jnp.uint32],
+                    expected_out_shapes=[(3, 2)],
+                    expected_out_dtypes=[jnp.uint32],
+                    )
+
+  def test_transpose(self):
     def fun(x):
-      return lax.convert_element_type(x, jnp.uint32)
-    x = TestExtendedArray(jnp.ones((4, 7, 3), dtype=jnp.float32))
+      return jnp.transpose(x, (1, 2, 0))
+    x = random.split(random.key(0), (2, 3, 7))
     result = jax.jit(fun)(x)
-    self.assertEqual(result.shape, (4,))
+    self.assertEqual(result.shape, (3, 7, 2))
     traced = jax.jit(fun).trace(x)
     phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
-    phys_aval = phys_jaxpr.jaxpr.invars[0].aval
-    self.assertEqual(phys_aval.shape, (4, 7, 3))
-    self.assertEqual(phys_aval.dtype, jnp.uint32)
+    self.assert_jaxpr(phys_jaxpr, 
+                    lax.transpose_p,
+                    expected_in_shapes=[(2, 3, 7, 2)],
+                    expected_in_dtypes=[jnp.uint32],
+                    expected_out_shapes=[(3, 7, 2, 2)],
+                    expected_out_dtypes=[jnp.uint32],
+                    )
 
+  def test_reshape(self):
+    def fun(x):
+      return jnp.reshape(x, (6, 7))
+    x = random.split(random.key(0), (2, 3, 7))
+    result = jax.jit(fun)(x)
+    self.assertEqual(result.shape, (6, 7))
+    traced = jax.jit(fun).trace(x)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    self.assert_jaxpr(phys_jaxpr, 
+                    lax.reshape_p,
+                    expected_in_shapes=[(2, 3, 7, 2)],
+                    expected_in_dtypes=[jnp.uint32],
+                    expected_out_shapes=[(6, 7, 2)],
+                    expected_out_dtypes=[jnp.uint32],
+                    )
+
+  # TODO: search for more opaque lowering, core.physical_aval, dtypes.extended
+  # transformations - shard_map, jax2tf, pjit, control_flow.loops
+  # TODO: add jax2tf tests
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
