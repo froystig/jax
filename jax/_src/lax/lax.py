@@ -2446,37 +2446,6 @@ ad.defjvp_zero(shift_right_logical_p)
 mlir.register_lowering(shift_right_logical_p,
                        partial(_nary_lower_hlo, hlo.shift_right_logical))
 
-def _opaque_comparison_hlo(direction, reduction_op, identity, ctx,
-                           avals_in, aval_out, x, y):
-  aval_x, aval_y = avals_in
-  base_aval_x = core.physical_aval(aval_x)
-  base_aval_y = core.physical_aval(aval_y)
-  base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
-  reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
-  res, = mlir.delegate_lowering(
-      ctx, partial(_compare_lower_hlo, direction, False),
-      x, y, avals_in=[base_aval_x, base_aval_y], avals_out=[base_aval_out])
-  return mlir.delegate_lowering(
-      ctx, partial(_unary_reduce_lower, reduction_op, identity,
-                   axes=reduce_axes),
-      res, avals_in=[base_aval_out], avals_out=[aval_out])
-
-_opaque_eq_hlo = partial(
-    _opaque_comparison_hlo, 'EQ', hlo.AndOp, _get_bitwise_and_identity)
-_opaque_ne_hlo = partial(
-    _opaque_comparison_hlo, 'NE', hlo.OrOp, _get_bitwise_or_identity)
-
-def _compare_lower_hlo_opaque(direction: str, ctx, avals_in, aval_out, x, y):
-  broadcast_avals_in = tuple(
-      core.ShapedArray(aval_out.shape, aval.dtype) for aval in avals_in)
-  if direction == 'EQ':
-    return _opaque_eq_hlo(ctx, broadcast_avals_in, aval_out, x, y)
-  elif direction == 'NE':
-    return _opaque_ne_hlo(ctx, broadcast_avals_in, aval_out, x, y)
-  else:
-    raise NotImplementedError(
-        f"HLO comparison {direction} for extended dtype {avals_in[0].dtype}")
-
 
 def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
   avals_in, (aval_out,) = ctx.avals_in, ctx.avals_out
@@ -4026,28 +3995,6 @@ def _select_jvp(primals, tangents):
     case_tangents = [z if type(t) is ad_util.Zero else t for t in case_tangents]
     out_dot = select_n(which, *case_tangents)
   return out, out_dot
-
-def _select_hlo_lowering_opaque(ctx, which, *cases):
-  avals_in = ctx.avals_in
-  aval_out, = ctx.avals_out
-  assert all(aval_case == aval_out for aval_case in avals_in[1:])
-  select_lower = _select_hlo_lowering
-
-  physical_aval_out = core.physical_aval(aval_out)
-  physical_avals_cases = [physical_aval_out] * (len(avals_in) - 1)
-  aval_which = avals_in[0]
-  aval_which_bcast = physical_aval_out.update(dtype=aval_which.dtype)
-  assert aval_which_bcast.shape[:aval_which.ndim] == aval_which.shape
-
-  bcast_dims = list(range(aval_which.ndim))
-  which_bcast = mlir.broadcast_in_dim(
-      ctx, which, aval_which_bcast, broadcast_dimensions=bcast_dims)
-
-  return mlir.delegate_lowering(
-      ctx, select_lower, which_bcast, *cases,
-      avals_in=[aval_which_bcast, *physical_avals_cases],
-      avals_out=[physical_aval_out])[0]
-
 
 def _select_hlo_lowering(ctx, which, *cases):
   which_aval = ctx.avals_in[0]
