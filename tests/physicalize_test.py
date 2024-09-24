@@ -465,6 +465,20 @@ class PhysicalizeTest(unittest.TestCase):
                     expected_out_dtypes=[jnp.uint32],
                     )
 
+  def test_random(self):
+    def fun(x):
+      k = random.key(x)
+      k1, k2 = random.split(k)
+      k1 = random.fold_in(k1, 0)
+      x1 = random.uniform(k1, shape=(4, 8))
+      
+      k2 = random.key_data(k2)
+      k2 = random.wrap_key_data(k2, impl=k.dtype._impl)
+      x2 = random.uniform(k2, shape=(4, 8))
+      return x1 + x2
+    result = jax.jit(fun)(0)
+    self.assertEqual(result.shape, (4, 8))
+
   # TODO: search for more opaque lowering, core.physical_aval, dtypes.extended
   # transformations - shard_map, jax2tf, pjit, control_flow.loops
   # TODO: add jax2tf tests

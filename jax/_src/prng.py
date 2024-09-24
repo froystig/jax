@@ -42,6 +42,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.interpreters import physical
 from jax._src.interpreters import xla
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import gpu_prng
@@ -560,9 +561,15 @@ def random_seed_lowering(ctx, seeds, *, impl):
   seed_lowering = mlir.lower_fun(seed, multiple_results=False)
   return mlir.delegate_lowering(
       ctx, seed_lowering, seeds,
-      avals_out=map(core.physical_aval, ctx.avals_out))
+      avals_out=ctx.avals_out)
 
-mlir.register_lowering(random_seed_p, random_seed_lowering)
+def random_seed_physicalize_rule(ctx, seeds, *, impl):
+  del ctx
+  return impl.seed(seeds)
+
+# TODO(justinfu): This is no longer necessary?
+# mlir.register_lowering(random_seed_p, random_seed_lowering)
+physical.physicalize_rules[random_seed_p] = random_seed_physicalize_rule
 
 
 def random_split(keys, shape: Shape):
@@ -593,10 +600,17 @@ def random_split_lowering(ctx, keys, *, shape):
   split_lowering = mlir.lower_fun(split, multiple_results=False)
   return mlir.delegate_lowering(
       ctx, split_lowering, keys,
-      avals_in=[core.physical_aval(aval)],
-      avals_out=map(core.physical_aval, ctx.avals_out))
+      avals_in=[aval],
+      avals_out=ctx.avals_out)
 
-mlir.register_lowering(random_split_p, random_split_lowering)
+def random_split_physicalize_rule(ctx, keys, *, shape):
+  aval, = ctx.avals_in
+  impl = aval.dtype._impl
+  return impl.split(keys, shape=shape)
+
+# TODO(justinfu): This is no longer necessary?
+# mlir.register_lowering(random_split_p, random_split_lowering)
+physical.physicalize_rules[random_split_p] = random_split_physicalize_rule
 
 
 def random_fold_in(keys, msgs):
@@ -631,11 +645,17 @@ def random_fold_in_lowering(ctx, keys, msgs):
   fold_in_lowering = mlir.lower_fun(fold_in, multiple_results=False)
   return mlir.delegate_lowering(
       ctx, fold_in_lowering, keys, msgs,
-      avals_in=[core.physical_aval(keys_aval), msgs_aval],
-      avals_out=map(core.physical_aval, ctx.avals_out))
+      avals_in=[keys_aval, msgs_aval],
+      avals_out=ctx.avals_out)
 
-mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
+def random_fold_in_physicalize_rule(ctx, keys, msgs):
+  key_aval, _ = ctx.avals_in
+  impl = key_aval.dtype._impl
+  return impl.fold_in(keys, msgs)
 
+# TODO(justinfu): This is no longer necessary?
+# mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
+physical.physicalize_rules[random_fold_in_p] = random_fold_in_physicalize_rule
 
 def random_bits(keys, bit_width, shape):
   return random_bits_p.bind(keys, bit_width=bit_width, shape=shape)
@@ -666,13 +686,19 @@ def random_bits_lowering(ctx, keys, *, bit_width, shape):
   bits = iterated_vmap_unary(
       aval.ndim, lambda k: impl.random_bits(k, bit_width, shape))
   bits_lowering = mlir.lower_fun(bits, multiple_results=False)
-  ctx_new = ctx.replace(avals_in=[core.physical_aval(aval)])
+  ctx_new = ctx.replace(avals_in=[aval])
   out = bits_lowering(ctx_new, keys)
   ctx.set_tokens_out(ctx_new.tokens_out)
   return out
 
-mlir.register_lowering(random_bits_p, random_bits_lowering)
+def random_bits_physicalize_rule(ctx, keys, *, bit_width, shape):
+  aval, = ctx.avals_in
+  impl = aval.dtype._impl
+  return impl.random_bits(keys, bit_width=bit_width, shape=shape)
 
+# TODO(justinfu): This is no longer necessary?
+# mlir.register_lowering(random_bits_p, random_bits_lowering)
+physical.physicalize_rules[random_bits_p] = random_bits_physicalize_rule
 
 # The following wrap/unwrap primitives are at least a stopgap for
 # backwards compatibility, namely when `config.jax_enable_custom_prng`
@@ -719,8 +745,13 @@ def random_wrap_batch_rule(batched_args, batch_dims, *, impl):
   x = batching.bdim_at_front(x, d, 1)
   return random_wrap(x, impl=impl), 0
 
-mlir.register_lowering(random_wrap_p, random_wrap_lowering)
+def random_wrap_physicalize_rule(ctx, base_arr, *, impl):
+  return base_arr
+
+# TODO(justinfu): This is no longer necessary?
+# mlir.register_lowering(random_wrap_p, random_wrap_lowering)
 batching.primitive_batchers[random_wrap_p] = random_wrap_batch_rule
+physical.physicalize_rules[random_wrap_p] = random_wrap_physicalize_rule
 
 
 def random_unwrap(keys):
@@ -743,8 +774,12 @@ def random_unwrap_impl(keys):
 def random_unwrap_lowering(ctx, keys):
   return [keys]
 
-mlir.register_lowering(random_unwrap_p, random_unwrap_lowering)
+def random_unwrap_physicalize_rule(ctx, keys):
+  return keys
 
+# TODO(justinfu): This is no longer necessary?
+# mlir.register_lowering(random_unwrap_p, random_unwrap_lowering)
+physical.physicalize_rules[random_unwrap_p] = random_unwrap_physicalize_rule
 
 # -- threefry2x32 PRNG implementation
 
