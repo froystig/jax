@@ -139,11 +139,11 @@ def physicalize_jaxpr_interp(jaxpr: core.Jaxpr,
         else:
           subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
           physical_outvals = eqn.primitive.bind(*subfuns, *physical_invals, **bind_params)
-      except TranslationException as e:
-        raise e
+      #except TranslationException as e:
+      #  raise e
       except Exception as e:
         message = f"Encountered exception while translating eqn {eqn}."
-        raise e from TranslationException(message)
+        raise TranslationException(message) from e
 
     if eqn.primitive.multiple_results:
       assert len(physical_outvals) == len(eqn.outvars)

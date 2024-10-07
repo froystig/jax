@@ -1599,6 +1599,9 @@ def physical_aval(aval):
   aval_dtype = getattr(aval, 'dtype', None)
   if aval_dtype and isinstance(aval_dtype, dtypes.ExtendedDType):
     ctor = type(aval)
+    # TODO: need a cleaner way of handling Refs.
+    if hasattr(ctor, 'inner_aval'):
+      ctor = lambda shape, dtype: aval.update(inner_aval=type(aval.inner_aval)(shape, dtype))
     aval_shape = getattr(aval, 'shape', None)
     assert aval_shape is not None, (ctor, aval)
     elt_aval = aval_dtype._rules.physical_element_aval(aval_dtype)
