@@ -1586,7 +1586,9 @@ def is_single_device_sharding(sharding: sharding.Sharding) -> bool:
   return sharding.num_devices == 1 and not isinstance(sharding, PmapSharding)
 
 def make_key_array_phys_sharding(aval, sharding):
-  if is_single_device_sharding(sharding):
+  if isinstance(sharding, UnspecifiedValue):
+    return sharding
+  elif is_single_device_sharding(sharding):
     return sharding
   elif isinstance(sharding, PmapSharding):
     elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)

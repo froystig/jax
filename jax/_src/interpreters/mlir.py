@@ -211,6 +211,8 @@ def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   return ir_type_factory()
 
 def _array_ir_types(aval: core.ShapedArray | core.DShapedArray) -> ir.Type:
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    assert False, aval
   aval = core.physical_aval(aval)  # type: ignore
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
@@ -982,8 +984,7 @@ def _to_physical_op_sharding(
     return _to_physical_op_sharding(ctx, aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    sharding = sharding_impls.physical_sharding(aval, sharding)
-    aval = core.physical_aval(aval)
+    assert False, aval
   axis_ctx = ctx.axis_context
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
@@ -1573,12 +1574,8 @@ def lower_jaxpr_to_fun(
           for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
     if ir_arg_shardings is not None and name == "main":
-      flat_args = [
-          replicate_trailing_dims(entry_lowering_ctx, o, a)
-          if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
-      ]
+      if any(dtypes.issubdtype(a.dtype, dtypes.extended) for a in input_avals):
+        assert False, input_avals
 
     _, token_args, unflattened_args = util.split_list(
         unflatten_ir_values_like_types(flat_args, input_types),
@@ -1614,12 +1611,8 @@ def lower_jaxpr_to_fun(
               flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
     if ir_result_shardings is not None and name == "main":
-      flat_outputs = [
-          replicate_trailing_dims(entry_lowering_ctx, o, a)
-          if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
-          for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
-      ]
+      if any(physical.is_extended(a) for a in output_avals):
+        assert False, output_avals
 
     func_dialect.return_(flat_outputs)
 
@@ -1649,6 +1642,7 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
   # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
   # The below custom call achieves the sharding like above example.
+  assert False
   if config.use_shardy_partitioner.value:
     physical_ndim = core.physical_aval(aval).ndim
     s = sharding.SdyArraySharding(
@@ -2375,6 +2369,8 @@ def _wrap_with_spmd_op(name: str,
     backend_config = ""
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    assert False
   out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
@@ -2425,6 +2421,8 @@ def wrap_with_layout_op(ctx: LoweringRuleContext,
                         aval_in: core.AbstractValue):
   result_type = aval_to_ir_type(aval_out)
   assert isinstance(result_type, ir.Type), result_type
+  if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
+    assert False
   out_shape = core.physical_aval(aval_out).shape  # type: ignore
   if core.is_constant_shape(out_shape):
     result_shapes = None
@@ -2705,6 +2703,8 @@ def _layout_to_mlir_layout(minor_to_major: Sequence[int] | None):
   return ir.DenseIntElementsAttr.get(layout, type=ir.IndexType.get())
 
 def _aval_to_default_layouts(aval):
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    assert False
   avals = [core.physical_aval(aval)]
   # Row major order is default for `NumPy`.
   return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]

@@ -17,12 +17,14 @@ from typing import Any, Sequence
 import unittest
 import operator as op
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import numpy as np
 import jax
 from jax import numpy as jnp
 from jax import random
 from jax import lax
+from jax._src import pjit
 from jax._src import ad_util
 from jax._src import core
 from jax._src import dtypes
@@ -34,6 +36,10 @@ from jax._src.lax import lax as lax_internal
 from jax._src import tree_util as tree_util_internal
 from jax._src.sharding_impls import (
     NamedSharding, PmapSharding, physical_sharding, logical_sharding)
+from jax.experimental import mesh_utils
+from jax.sharding import Mesh, PartitionSpec as P
+from jax.experimental import shard_map
+
 
 jax.config.parse_flags_with_absl()
 
@@ -479,9 +485,174 @@ class PhysicalizeTest(unittest.TestCase):
     result = jax.jit(fun)(0)
     self.assertEqual(result.shape, (4, 8))
 
-  # TODO: search for more opaque lowering, core.physical_aval, dtypes.extended
-  # transformations - shard_map, jax2tf, pjit, control_flow.loops
-  # TODO: add jax2tf tests
+    vmapped_fun = jax.vmap(fun)
+    seeds = jnp.arange(10)
+    with self.subTest('vmapped'):
+      result = jax.jit(vmapped_fun)(seeds)
+      self.assertEqual(result.shape, (10, 4, 8))
+
+
+class PhysicalizeTransformationsTest(parameterized.TestCase):
+  def test_shard_map_eager(self):
+    def fun(k, y):
+      out = jax.random.uniform(k[0], shape=(5, 4)) + y[0, 0]
+      return out
+    n_devices = jax.device_count()
+    x_dim = n_devices // 2
+    mesh = Mesh(devices=mesh_utils.create_device_mesh((x_dim, 2)), axis_names=('x', 'y'))
+    keys = random.split(random.key(0), (x_dim,))
+    keys = jax.device_put(keys, NamedSharding(mesh, P('x',)))
+    y = jnp.ones((x_dim, 2))
+    y = jax.device_put(y, NamedSharding(mesh, P('x', 'y')))
+    mapped_fun = shard_map.shard_map(jax.jit(fun),
+                        mesh=mesh,
+                        in_specs=(P('x',), P('x', 'y')),
+                        out_specs=P('x', 'y')
+                        )
+    result = mapped_fun(keys, y)
+    self.assertEqual(result.shape, (x_dim * 5, 8))
+
+  def test_shard_map_inside_jit(self):
+    def fun(k, y):
+      out = jax.random.uniform(k[0], shape=(5, 4)) + y[0, 0]
+      return out
+    n_devices = jax.device_count()
+    x_dim = n_devices // 2
+    mesh = Mesh(devices=mesh_utils.create_device_mesh((x_dim, 2)), axis_names=('x', 'y'))
+    keys = random.split(random.key(0), (x_dim,))
+    keys = jax.device_put(keys, NamedSharding(mesh, P('x',)))
+    y = jnp.ones((x_dim, 2))
+    y = jax.device_put(y, NamedSharding(mesh, P('x', 'y')))
+    mapped_fun = shard_map.shard_map(fun,
+                        mesh=mesh,
+                        in_specs=(P('x',), P('x', 'y')),
+                        out_specs=P('x', 'y')
+                        )
+    mapped_fun = jax.jit(mapped_fun)
+    result = mapped_fun(keys, y)
+    self.assertEqual(result.shape, (x_dim * 5, 8))
+  
+  def test_pjit_sharding(self):
+    def fun(k):
+      return jax.random.key_data(k)
+    n_devices = jax.device_count()
+    mesh = Mesh(devices=mesh_utils.create_device_mesh((n_devices, )), axis_names=('x',))
+    keys = random.split(random.key(0), (n_devices,))
+    keys = jax.device_put(keys, NamedSharding(mesh, P('x',)))
+    jitted_fun = pjit.pjit(fun,
+                        in_shardings=NamedSharding(mesh, P('x')),
+                        out_shardings=NamedSharding(mesh, P('x')),
+                        )
+    result = jax.jit(jitted_fun)(keys)
+    self.assertEqual(result.shape, (8, 2))
+    traced = jax.jit(jitted_fun).trace(keys)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    pjit_eqn = find_primitive(phys_jaxpr, pjit.pjit_p)
+    in_shardings = pjit_eqn.params['in_shardings']
+    self.assertEqual(len(in_shardings), 1)
+    # pjit should insert an extra None to account for the physical dimension.
+    self.assertEqual(in_shardings[0].spec, P('x', None))
+    out_shardings = pjit_eqn.params['out_shardings']
+    self.assertEqual(len(out_shardings), 1)
+    self.assertEqual(out_shardings[0].spec, P('x',))
+
+  def test_sharding_constraint(self):
+    def fun(k):
+      x = lax.with_sharding_constraint(k, NamedSharding(mesh, P('x')))
+      x = jax.random.key_data(k)
+      return x
+    n_devices = jax.device_count()
+    mesh = Mesh(devices=mesh_utils.create_device_mesh((n_devices, )), axis_names=('x',))
+    keys = random.split(random.key(0), (n_devices, 4))
+    keys = jax.device_put(keys, NamedSharding(mesh, P('x')))
+    jitted_fun = pjit.pjit(fun,
+                        in_shardings=NamedSharding(mesh, P('x')),
+                        out_shardings=NamedSharding(mesh, P('x')),
+                        )
+    result = jax.jit(jitted_fun)(keys)
+    self.assertEqual(result.shape, (8, 4, 2))
+    traced = jax.jit(jitted_fun).trace(keys)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    sharding_constraint_eqn = find_primitive(phys_jaxpr, pjit.sharding_constraint_p)
+    sharding = sharding_constraint_eqn.params['sharding']
+    # sharding_constraint should insert an extra None to account for the physical dimension.
+    self.assertEqual(sharding.spec, P('x', None))
+
+  def test_all_gather(self):
+    def fun(k):
+      k = lax.all_gather(k, 'x')  # Shape: [n_devices, 1]
+      return jax.random.key_data(k) # Shape: [n_devices, 1, 2]
+    n_devices = jax.device_count()
+    mesh = Mesh(devices=mesh_utils.create_device_mesh((n_devices, )), axis_names=('x',))
+    keys = random.split(random.key(0), (n_devices,))
+    keys = jax.device_put(keys, NamedSharding(mesh, P('x',)))
+    mapped_fun = shard_map.shard_map(fun,
+                        mesh=mesh,
+                        in_specs=(P('x'),),
+                        out_specs=P('x')
+                        )
+    result = jax.jit(mapped_fun)(keys)
+    self.assertEqual(result.shape, (n_devices * n_devices, 1, 2))
+
+  def test_batched_while_loop(self):
+    def _cond_fun(val):
+      return val[0] < 10
+    
+    def _body_fun(val):
+      return (val[0] + 1, val[1])
+
+    def fun(keys):
+      def _generate_loop(k):
+        return lax.while_loop(_cond_fun,
+                              _body_fun,
+                              (0, k))[1]
+      return jax.vmap(_generate_loop)(keys)
+
+    keys = random.split(random.key(0), (10,))
+    result = jax.jit(fun)(keys)
+    np.testing.assert_array_equal(result, keys)
+    eager_result = jax.jit(fun)(keys)
+    np.testing.assert_array_equal(eager_result, keys)
+    traced = jax.jit(fun).trace(keys)
+    phys_jaxpr = physical.physicalize_jaxpr(traced.jaxpr)
+    while_eqn = find_primitive(phys_jaxpr, lax.while_p)
+    body_invars = while_eqn.params['body_jaxpr'].jaxpr.invars
+    self.assertEqual(body_invars[1].aval.shape, (10, 2))
+    self.assertEqual(body_invars[1].aval.dtype, jnp.uint32)
+    cond_invars = while_eqn.params['cond_jaxpr'].jaxpr.invars
+    self.assertEqual(cond_invars[1].aval.shape, (10, 2))
+    self.assertEqual(cond_invars[1].aval.dtype, jnp.uint32)
+
+  def test_scan(self):
+    def _body_fun(carry, _):
+      return (carry, carry)
+
+    def fun(keys):
+      final_carry, _ = lax.scan(_body_fun, keys, jnp.arange(5))
+      return final_carry
+
+    keys = random.split(random.key(0), (10,))
+    result = jax.jit(fun)(keys)
+    np.testing.assert_array_equal(result, keys)
+
+  @parameterized.parameters((True,), (False,))
+  def test_cond(self, pred):
+    def true_fn(key):
+      return random.split(key)[0]
+
+    def false_fn(key):
+      return random.split(key)[1]
+
+    def fun_with_cond(key, pred):
+      return lax.cond(pred, true_fn, false_fn, key)
+
+    key = random.key(0)
+    true_key, false_key = random.split(key)
+    result = jax.jit(fun_with_cond)(key, pred)
+    if pred:
+      np.testing.assert_array_equal(result, true_key)
+    else:
+      np.testing.assert_array_equal(result, false_key)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

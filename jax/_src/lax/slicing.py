@@ -1322,7 +1322,7 @@ def _dynamic_slice_physicalize_rule(ctx, x, *starts_and_dyn_sizes, slice_sizes):
   elt_shape = aval_out.dtype._rules.physical_element_aval(
       aval_out.dtype).shape
   start_indices, dyn = util.split_list(starts_and_dyn_sizes, [x_aval.ndim])
-  trailing_zeros = [0] * len(elt_shape)
+  trailing_zeros = lax._zeros((len(elt_shape),), dtype=start_indices[0].dtype)
   start_indices = (*start_indices, *trailing_zeros, *dyn)
   slice_sizes = (*slice_sizes, *elt_shape)
   return dynamic_slice(x, start_indices, slice_sizes)
@@ -1440,7 +1440,7 @@ def _dynamic_update_slice_physicalize_rule(ctx, x, update, *start_indices):
   aval_out, = ctx.avals_out
   elt_shape = aval_out.dtype._rules.physical_element_aval(
       aval_out.dtype).shape
-  zeros = [0] * len(elt_shape)
+  zeros = lax._zeros((len(elt_shape),), dtype=start_indices[0].dtype)
   start_indices = (*start_indices, *zeros)
   return dynamic_update_slice(x, update, start_indices=start_indices)
 

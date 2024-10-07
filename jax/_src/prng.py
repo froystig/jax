@@ -564,8 +564,9 @@ def random_seed_lowering(ctx, seeds, *, impl):
       avals_out=ctx.avals_out)
 
 def random_seed_physicalize_rule(ctx, seeds, *, impl):
-  del ctx
-  return impl.seed(seeds)
+  aval, = ctx.avals_in
+  seed = iterated_vmap_unary(aval.ndim, impl.seed)
+  return seed(seeds)
 
 # TODO(justinfu): This is no longer necessary?
 # mlir.register_lowering(random_seed_p, random_seed_lowering)
@@ -606,7 +607,8 @@ def random_split_lowering(ctx, keys, *, shape):
 def random_split_physicalize_rule(ctx, keys, *, shape):
   aval, = ctx.avals_in
   impl = aval.dtype._impl
-  return impl.split(keys, shape=shape)
+  split = iterated_vmap_unary(aval.ndim, lambda k: impl.split(k, shape))
+  return split(keys)
 
 # TODO(justinfu): This is no longer necessary?
 # mlir.register_lowering(random_split_p, random_split_lowering)
@@ -649,9 +651,11 @@ def random_fold_in_lowering(ctx, keys, msgs):
       avals_out=ctx.avals_out)
 
 def random_fold_in_physicalize_rule(ctx, keys, msgs):
-  key_aval, _ = ctx.avals_in
-  impl = key_aval.dtype._impl
-  return impl.fold_in(keys, msgs)
+  keys_aval, msgs_aval = ctx.avals_in
+  impl = keys_aval.dtype._impl
+  fold_in = iterated_vmap_binary_bcast(
+      keys_aval.shape, msgs_aval.shape, impl.fold_in)
+  return fold_in(keys, msgs)
 
 # TODO(justinfu): This is no longer necessary?
 # mlir.register_lowering(random_fold_in_p, random_fold_in_lowering)
@@ -694,7 +698,9 @@ def random_bits_lowering(ctx, keys, *, bit_width, shape):
 def random_bits_physicalize_rule(ctx, keys, *, bit_width, shape):
   aval, = ctx.avals_in
   impl = aval.dtype._impl
-  return impl.random_bits(keys, bit_width=bit_width, shape=shape)
+  bits = iterated_vmap_unary(
+      aval.ndim, lambda k: impl.random_bits(k, bit_width, shape))
+  return bits(keys)
 
 # TODO(justinfu): This is no longer necessary?
 # mlir.register_lowering(random_bits_p, random_bits_lowering)

@@ -1279,9 +1279,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   if np.shape(fill_value):
     msg = "full must be called with scalar fill_value, got fill_value.shape {}."
     raise TypeError(msg.format(np.shape(fill_value)))
-  # TODO(justinfu): Can we just comment this out? It lowers to broadcast.
-  #if dtypes.issubdtype(dtype, dtypes.extended):
-  #  return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
+  if dtypes.issubdtype(dtype, dtypes.extended):
+    return dtype._rules.full(shape, fill_value, dtype)  # type: ignore[union-attr]
   weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
@@ -1462,9 +1461,8 @@ def full_like(x: ArrayLike | DuckTypedArray,
   fill_shape = np.shape(x) if shape is None else canonicalize_shape(shape)  # type: ignore[arg-type]
   weak_type = dtype is None and dtypes.is_weakly_typed(x)
   dtype = dtype or _dtype(x)
-  # TODO(justinfu): Can we just comment this out?
-  #if dtypes.issubdtype(dtype, dtypes.extended):
-  #  return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
+  if dtypes.issubdtype(dtype, dtypes.extended):
+    return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
   # If `x` has a sharding but no `_committed` attribute
   # (in case of ShapeDtypeStruct), default it to True.
@@ -2461,14 +2459,33 @@ def _compare_lower_hlo(direction: str, total_order: bool, ctx, x, y):
     compare_type = "UNSIGNED"
   return [mlir.compare_hlo(x, y, direction, compare_type)]
 
-def _compare_physicalize_rule(direction: str, total_order: bool, ctx, x, y):
+def _compare_physicalize_rule(direction: str,
+                              total_order: bool,
+                              ctx: physical.PhysicalizeContext, x, y):
   assert not total_order
   aval_x, aval_y = ctx.avals_in
   aval_out, = ctx.avals_out
   base_aval_x = core.physical_aval(aval_x)
   base_aval_y = core.physical_aval(aval_y)
-  base_aval_out = core.ShapedArray(base_aval_x.shape, aval_out.dtype)
+  elt_shape = aval_x.dtype._rules.physical_element_aval(  # type: ignore
+      aval_x.dtype).shape                                 # type: ignore
+  out_shape = aval_out.shape + elt_shape
+  base_aval_out = core.ShapedArray(out_shape, aval_out.dtype)
   reduce_axes = tuple(range(aval_out.ndim, base_aval_out.ndim))
+
+  x_and_y = []
+  for op, op_aval in zip([x, y], [base_aval_x, base_aval_y]):
+    op_aval_shape = op_aval.shape  # type: ignore
+    if core.definitely_equal_shape(op_aval_shape, out_shape):
+      x_and_y.append(op)
+    else:
+      assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
+      broadcast_dimensions = list(range(len(out_shape) - len(op_aval_shape), len(out_shape)))
+      x_and_y.append(broadcast_in_dim(op,
+                                  out_shape,
+                                  broadcast_dimensions=broadcast_dimensions))
+  x, y = x_and_y
+
   if direction == 'EQ':
     result = eq_p.bind(x, y)
     reduction_op = reduce_and_p
@@ -5354,7 +5371,7 @@ def _empty_lower(ctx, *, dtype):
   if dtypes.issubdtype(dtype, dtypes.extended):
     assert False
   dtype = np.dtype(dtype)
-  return mlir.ir_constant(np.zeros((), dtype))
+  return [mlir.ir_constant(np.zeros((), dtype))]
 mlir.register_lowering(empty_p, _empty_lower)
 
 def _empty_physicalize_rule(ctx, *, dtype):

@@ -15,8 +15,10 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 import dataclasses
 import functools
 from functools import partial
+import numpy as np
 from typing import Any
 
+from jax._src import config
 from jax._src import core
 from jax._src import dtypes
 from jax._src import source_info_util
@@ -35,6 +37,38 @@ def default_physicalize_rule(primitive, ctx, *args, **params):
   return primitive.bind(*args, **params)
 
 
+def physicalize_fun(fun: Callable, multiple_results: bool = True) -> Callable:
+  """Converts a traceable JAX function `fun` into a translation rule."""
+  def _rule(ctx: PhysicalizeContext, *args, **params):
+    f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
+    wrapped_fun = lu.wrap_init(f, params)
+    if config.dynamic_shapes.value:
+      # We might be applying this function to arguments with dynamic shapes,
+      # i.e. there might be Vars in the shape tuples of ctx.avals_in. In that
+      # case, we need to form a jaxpr with leading binders for those axis size
+      # arguments (by computing an InputType and using trace_to_jaxpr_dynamic2),
+      # and we need to call jaxpr_subcomp with these arguments made explicit.
+      assert ctx.axis_size_env is not None
+      args = (*ctx.axis_size_env.values(), *args)
+      idx = {d: core.DBIdx(i) for i, d in enumerate(ctx.axis_size_env)}
+      i32_aval = core.ShapedArray((), np.dtype('int32'))
+      implicit_args = [(i32_aval, False)] * len(ctx.axis_size_env)
+      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))  # type: ignore
+                        if type(a) is core.DShapedArray else a, True)
+                      for a in ctx.avals_in]
+      wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
+      jaxpr, _, consts = pe.trace_to_jaxpr_dynamic2(wrapped_fun)
+    else:
+      jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    phys_jaxpr = physicalize_jaxpr(core.ClosedJaxpr(jaxpr, consts))    
+    result = core.eval_jaxpr(phys_jaxpr.jaxpr, phys_jaxpr.consts, *args)
+    if multiple_results:
+      return result
+    else:
+      return result[0]
+  return _rule
+
+
 def physicalize_jaxpr(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
   """Replaces all extended dtypes with physical types in a jaxpr."""
   fun = partial(physicalize_jaxpr_interp, jaxpr.jaxpr, jaxpr.consts)
@@ -50,6 +84,13 @@ class PhysicalizeContext:
   avals_in: Sequence[Any]
   avals_out: Sequence[Any]
 
+class TranslationException(Exception):
+  pass
+
+def is_extended(aval: Any):
+  if isinstance(aval, core.AbstractToken):
+    return False
+  return dtypes.issubdtype(aval.dtype, dtypes.extended)
 
 def physicalize_jaxpr_interp(jaxpr: core.Jaxpr,
                              consts: Sequence[core.Value],
@@ -64,6 +105,8 @@ def physicalize_jaxpr_interp(jaxpr: core.Jaxpr,
     return env[var]
 
   def write_env(var: core.Var, val: Any):
+    if config.enable_checks.value and not config.dynamic_shapes.value:
+      assert core.typecheck(var.aval, val), (var.aval, val)
     env[var] = val
 
   map(write_env, jaxpr.constvars, consts)
@@ -82,18 +125,26 @@ def physicalize_jaxpr_interp(jaxpr: core.Jaxpr,
     with source_info_util.user_context(
         eqn.source_info.traceback, name_stack=name_stack
     ):
-      has_extended_input = any(dtypes.issubdtype(var.aval.dtype, dtypes.extended) for var in eqn.invars)
-      has_extended_output = any(dtypes.issubdtype(var.aval.dtype, dtypes.extended) for var in eqn.outvars)
-      if has_extended_input or has_extended_output:
-        ctx = PhysicalizeContext(
-          avals_in = tuple(x.aval for x in eqn.invars),
-          avals_out = tuple(x.aval for x in eqn.outvars)
-        )
-        physical_outvals = physicalize_rule(
-            ctx, *physical_invals, **eqn.params
-        )
-      else:
-        physical_outvals = eqn.primitive.bind(*physical_invals, **eqn.params)
+      has_extended_input = any(is_extended(var.aval) for var in eqn.invars)
+      has_extended_output = any(is_extended(var.aval) for var in eqn.outvars)
+      try:
+        if has_extended_input or has_extended_output:
+          ctx = PhysicalizeContext(
+            avals_in = tuple(x.aval for x in eqn.invars),
+            avals_out = tuple(x.aval for x in eqn.outvars),
+          )
+          physical_outvals = physicalize_rule(
+              ctx, *physical_invals, **eqn.params
+          )
+        else:
+          subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
+          physical_outvals = eqn.primitive.bind(*subfuns, *physical_invals, **bind_params)
+      except TranslationException as e:
+        raise e
+      except Exception as e:
+        message = f"Encountered exception while translating eqn {eqn}."
+        raise e from TranslationException(message)
+
     if eqn.primitive.multiple_results:
       assert len(physical_outvals) == len(eqn.outvars)
       map(write_env, eqn.outvars, physical_outvals)

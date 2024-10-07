@@ -36,7 +36,11 @@ def add_jaxvals(x: ArrayLike, y: ArrayLike) -> Array:
 
 def _add_jaxvals_physicalize_rule(ctx, x, y):
   a, _ = ctx.avals_in
-  return a.dtype._rules.add(a.dtype, x, y)
+  aval_out, = ctx.avals_out
+  out_dtype = aval_out.dtype
+  def add_with_extended(x, y):
+    return out_dtype._rules.add(out_dtype, x, y)
+  return physical.physicalize_fun(add_with_extended, multiple_results=False)(ctx, x, y)
 
 add_jaxvals_p = Primitive('add_any')
 add_any_p = add_jaxvals_p
