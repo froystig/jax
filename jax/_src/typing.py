@@ -31,12 +31,14 @@ import enum
 import typing
 from typing import Any, Protocol, Union
 
+import numpy as np
+
+from jax._src import sharding
 from jax._src.basearray import (
     ArrayLike as ArrayLike,
     Array as Array,
     StaticScalar as StaticScalar,
 )
-import numpy as np
 
 DType = np.dtype
 
@@ -73,6 +75,20 @@ class ArrayDuck(Protocol):
   def dtype(self) -> DType: ...
   @property
   def shape(self) -> Shape: ...
+  @property
+  def size(self) -> int: ...
+  @property
+  def ndim(self) -> int: ...
+  @property
+  def sharding(self) -> sharding.Sharding: ...
+  @property
+  def layout(self) -> int: ...
+  @property
+  def weak_type(self) -> bool: ...
+
+  def __len__(self) -> int: ...
+  def __eq__(self, other) -> bool: ...
+  def __hash__(self) -> int: ...
 
 # Array is a type annotation for standard JAX arrays and tracers produced by
 # core functions in jax.lax and jax.numpy; it is not meant to include
