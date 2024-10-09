@@ -63,7 +63,7 @@ from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import (
   Array, ArrayLike,
-  DType, DTypeLike, DeprecatedArg, DimSize, DuckTypedArray, Shape, StaticScalar,
+  DType, DTypeLike, DeprecatedArg, DimSize, ArrayDuck, Shape, StaticScalar,
 )
 from jax._src.util import (
                            NumpyComplexWarning,
@@ -5371,7 +5371,7 @@ def copy(a: ArrayLike, order: str | None = None) -> Array:
   return array(a, copy=True, order=order)
 
 
-def zeros_like(a: ArrayLike | DuckTypedArray,
+def zeros_like(a: ArrayLike | ArrayDuck,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
                device: xc.Device | Sharding | None = None) -> Array:
@@ -5413,7 +5413,7 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 0, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
-def ones_like(a: ArrayLike | DuckTypedArray,
+def ones_like(a: ArrayLike | ArrayDuck,
               dtype: DTypeLike | None = None,
               shape: Any = None, *,
               device: xc.Device | Sharding | None = None) -> Array:
@@ -5455,7 +5455,7 @@ def ones_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 1, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
-def empty_like(prototype: ArrayLike | DuckTypedArray,
+def empty_like(prototype: ArrayLike | ArrayDuck,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
                device: xc.Device | Sharding | None = None) -> Array:
@@ -5552,7 +5552,7 @@ def full(shape: Any, fill_value: ArrayLike,
         broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
-def full_like(a: ArrayLike | DuckTypedArray,
+def full_like(a: ArrayLike | ArrayDuck,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Any = None, *,
               device: xc.Device | Sharding | None = None) -> Array:

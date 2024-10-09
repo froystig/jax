@@ -68,7 +68,7 @@ DTypeLike = Union[
 DimSize = Union[int, Any]  # extensible
 Shape = Sequence[DimSize]
 
-class DuckTypedArray(Protocol):
+class ArrayDuck(Protocol):
   @property
   def dtype(self) -> DType: ...
   @property
