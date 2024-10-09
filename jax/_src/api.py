@@ -72,6 +72,7 @@ from jax._src.sharding_impls import PmapSharding, TransferToMemoryKind
 from jax._src.layout import Layout, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
+from jax._src.typing import ArrayDuck
 from jax._src.util import unzip2, safe_map, safe_zip, wraps, split_list
 from jax._src import util
 
@@ -2484,6 +2485,22 @@ def device_get(x: Any):
     return tree_map(_device_get, x)
 
 
+# TODO(frostig, yashkatariya): also introduce a `duck_like(x: ArrayDuck)`?
+def duck(shape, dtype, *, sharding=None, weak_type=None) -> ArrayDuck:
+  """Make a container for the given array attributes (shape, dtype, etc.).
+
+  The output of ``duck`` is often used as input to :func:`jax.eval_shape`.
+
+  Args:
+    shape: a sequence of integers representing an array shape
+    dtype: a dtype-like object
+    sharding: (optional) a :class:`jax.Layout` or :class:`jax.Sharding` object
+  """
+  return ShapeDtypeStruct(shape, dtype, sharding=sharding, weak_type=weak_type)
+
+
+# TODO(frostig, yashkatariya): This type can be removed from the
+# public API in favor of using the `duck` function above.
 class ShapeDtypeStruct:
   """A container for the shape, dtype, and other static attributes of an array.
 
