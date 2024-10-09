@@ -35,7 +35,7 @@ from jax._src.layout import DeviceLocalLayout
 from jax._src.lib import jaxlib
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
-from jax._src.typing import (Array, ArrayLike, DeprecatedArg, DuckTypedArray,
+from jax._src.typing import (Array, ArrayLike, DeprecatedArg, ArrayDuck,
                              Shape)
 
 map, unsafe_map = util.safe_map, map
@@ -183,7 +183,7 @@ def ffi_lowering(
   return _lowering
 
 
-ResultMetadata = DuckTypedArray | core.AbstractToken
+ResultMetadata = ArrayDuck | core.AbstractToken
 
 
 def _result_avals(results: Sequence[ResultMetadata]) -> tuple[core.AbstractValue, ...]:

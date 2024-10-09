@@ -66,7 +66,7 @@ from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import (PmapSharding, NamedSharding,
                                      PartitionSpec as P)
-from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, ArrayDuck, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
 
@@ -1780,7 +1780,7 @@ def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
 
 ### convenience wrappers around traceables
 
-def full_like(x: ArrayLike | DuckTypedArray,
+def full_like(x: ArrayLike | ArrayDuck,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Shape | None = None, sharding: Sharding | None = None) -> Array:
   """Create a full array like np.full based on the example array `x`.

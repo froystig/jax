@@ -14,7 +14,7 @@ from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClas
 from jax._src.numpy.array_api_metadata import ArrayNamespaceInfo
 from jax._src.typing import (
     Array, ArrayLike, DType, DTypeLike, DeprecatedArg,
-    DimSize, DuckTypedArray, Shape, StaticScalar,
+    DimSize, ArrayDuck, Shape, StaticScalar,
 )
 from jax.numpy import fft as fft, linalg as linalg
 from jax.sharding import Sharding as _Sharding
@@ -376,7 +376,7 @@ def einsum_path(
 
 def empty(shape: Any, dtype: DTypeLike | None = ...,
           device: _Device | _Sharding | None = ...) -> Array: ...
-def empty_like(prototype: ArrayLike | DuckTypedArray,
+def empty_like(prototype: ArrayLike | ArrayDuck,
                dtype: DTypeLike | None = ...,
                shape: Any = ..., *,
                device: _Device | _Sharding | None = ...) -> Array: ...
@@ -438,7 +438,7 @@ def fromstring(
 def full(shape: Any, fill_value: ArrayLike,
          dtype: DTypeLike | None = ..., *,
          device: _Device | _Sharding | None = ...) -> Array: ...
-def full_like(a: ArrayLike | DuckTypedArray,
+def full_like(a: ArrayLike | ArrayDuck,
               fill_value: ArrayLike, dtype: DTypeLike | None = ...,
               shape: Any = ..., *,
               device: _Device | _Sharding | None = ...) -> Array: ...
@@ -687,7 +687,7 @@ object_ = _np.object_
 ogrid: _Ogrid
 def ones(shape: Any, dtype: DTypeLike | None = ...,
          device: _Device | _Sharding | None = ...) -> Array: ...
-def ones_like(a: ArrayLike | DuckTypedArray,
+def ones_like(a: ArrayLike | ArrayDuck,
               dtype: DTypeLike | None = ...,
               shape: Any = ..., *,
               device: _Device | _Sharding | None = ...) -> Array: ...
@@ -974,7 +974,7 @@ def where(condition: ArrayLike, x: ArrayLike | None = ...,
 
 def zeros(shape: Any, dtype: DTypeLike | None = ...,
           device: _Device | _Sharding | None = ...) -> Array: ...
-def zeros_like(a: ArrayLike | DuckTypedArray,
+def zeros_like(a: ArrayLike | ArrayDuck,
                dtype: DTypeLike | None = ...,
                shape: Any = ..., *,
                device: _Device | _Sharding | None = ...) -> Array: ...
