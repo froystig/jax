@@ -46,7 +46,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
 from jax._src import sharding_impls as sharding
-from jax._src.mesh import use_abstract_mesh
+from jax._src.mesh import use_abstract_mesh, get_abstract_mesh
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
@@ -57,6 +57,7 @@ from jax._src.lax.other import logaddexp
 from jax._src.pjit import auto_axes, PartitionSpec as P, reshard
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
+from jax._src.shard_map import shard_map
 from jax._src.sharding_impls import canonicalize_sharding
 from jax._src.state import discharge as state_discharge, AbstractRef
 from jax._src.traceback_util import api_boundary
@@ -2578,8 +2579,8 @@ def map(f, xs, *, batch_size: int | None = None):
     _, ys = scan(g, (), xs)
   return ys
 
-def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype,
-                                     algorithm, out_sharding):
+def _rng_bit_generator_batching_rule(axis_data, batched_args, batch_dims, *,
+                                     shape, dtype, algorithm, out_sharding):
   keys, = batched_args
   bd, = batch_dims
   if bd is batching.not_mapped:
@@ -2587,17 +2588,32 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype,
         keys, shape=shape, dtype=dtype, algorithm=algorithm,
         out_sharding=out_sharding), (None, None)
   keys = batching.moveaxis(keys, bd, 0)
-  batch_size = keys.shape[0]
-  out_s = (out_sharding.update(spec=(keys.aval.sharding.spec[0], *out_sharding.spec))
-           if out_sharding is not None else None)
-  key = keys[0]
-  new_key, bits = lax.rng_bit_generator_p.bind(
-      key, shape=(batch_size, *shape), dtype=dtype, algorithm=algorithm,
-      out_sharding=out_s)
-  new_keys = slicing.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
+
+  def generate(local_keys):
+    local_batch_size = local_keys.shape[0]
+    local_key = local_keys[0]
+    new_key, bits = lax.rng_bit_generator_p.bind(
+        local_key, shape=(local_batch_size, *shape), dtype=dtype,
+        algorithm=algorithm, out_sharding=out_sharding)
+    new_keys = slicing.dynamic_update_index_in_dim(local_keys, new_key, 0, axis=0)
+    return new_keys, bits
+
+  cur_mesh = get_abstract_mesh()
+
+  if cur_mesh.are_all_axes_explicit:
+    batch_spec = axis_data.explicit_mesh_axis
+    rest_spec = (out_sharding.spec if out_sharding is not None
+                 else [None] * len(shape))
+    generate = shard_map(
+        generate,
+        in_specs=P(batch_spec),
+        out_specs=(P(batch_spec), P(batch_spec, *rest_spec)))
+
+  new_keys, bits = generate(keys)
   return (new_keys, bits), (0, 0)
 
-batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
+batching.fancy_primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
+batching.skippable_batchers[lax.rng_bit_generator_p] = lambda _: ()
 
 ### associative_scan
 

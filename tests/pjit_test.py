@@ -119,6 +119,30 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Repro for a bug on addressable_shards aval
     _ = repr(actual.addressable_shards)
 
+  def test_rng_bit_generator_vmap_sharded_auto(self):
+    # See https://github.com/jax-ml/jax/issues/34497
+    mesh = jtu.create_mesh((2,), ('x',))
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(5, 7))
+
+    keys = np.arange(4 * 4).reshape((4, 4)).astype(np.uint32)
+    sharding = NamedSharding(mesh, P('x'))
+    keys_sharded = jax.device_put(keys, sharding)
+
+    with jax.set_mesh(mesh):
+      out_keys, bits = jax.vmap(f)(keys_sharded)
+
+    self.assertEqual(out_keys.shape, (4, 4))
+    self.assertEqual(bits.shape, (4, 5, 7))
+
+    vmapped_f = jax.jit(jax.vmap(f))
+    with jax.set_mesh(mesh):
+      lowered = vmapped_f.lower(keys_sharded)
+    hlo_text = lowered.as_text()
+    for collective in ['all-gather', 'all-reduce', 'all-to-all',
+                       'collective-permute', 'collective-broadcast']:
+      self.assertNotIn(collective, hlo_text)
+
   @jtu.with_mesh([('x', 2)])
   def testBasic1D(self):
     @partial(pjit,
@@ -10112,6 +10136,19 @@ class ShardingInTypesTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "Unmapped values passed to vmap cannot be sharded"):
       jax.jit(jax.vmap(jax.grad(einsum_loss), in_axes=(None, 0)))(a, b)
+
+  @jtu.with_explicit_mesh((2,), ('x',))
+  def test_rng_bit_generator_vmap_sharded_explicit(self, mesh):
+    # See https://github.com/jax-ml/jax/issues/34497
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(5, 7))
+
+    keys = np.arange(4 * 4).reshape((4, 4)).astype(np.uint32)
+    keys_sharded = jax.reshard(keys, P('x', None))
+    out_keys, bits = jax.vmap(f)(keys_sharded)
+
+    self.assertEqual(out_keys.shape, (4, 4))
+    self.assertEqual(bits.shape, (4, 5, 7))
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
